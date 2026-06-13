@@ -6,7 +6,9 @@ const {
   parseKimiQuota,
   recommendMapping,
   mergeSettings,
-  detectStorageCandidates
+  detectStorageCandidates,
+  normalizeProvider,
+  formatUnsupportedProvider
 } = require("../bin/mm.js");
 
 test("parseKimiModels normalizes Kimi model list", () => {
@@ -81,4 +83,11 @@ test("detectStorageCandidates always includes local and custom choices", () => {
   const choices = detectStorageCandidates("/tmp/mengmeng-default");
   assert.ok(choices.find((choice) => choice.label === "Local config" && choice.path === "/tmp/mengmeng-default"));
   assert.ok(choices.find((choice) => choice.label === "Custom path" && choice.value === "custom"));
+});
+
+test("provider names support aliases and friendly suggestions", () => {
+  assert.equal(normalizeProvider("moonshot"), "kimi");
+  const message = formatUnsupportedProvider("kim");
+  assert.match(message, /Did you mean: mm add kimi/);
+  assert.match(message, /Supported providers:/);
 });

@@ -10,6 +10,13 @@ const KIMI_CODING_BASE = "https://api.kimi.com/coding";
 const KIMI_MODELS_URL = "https://api.kimi.com/coding/v1/models";
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 const QUOTA_CACHE_MS = 5 * 60 * 1000;
+const SUPPORTED_PROVIDERS = [
+  {
+    id: "kimi",
+    name: "Kimi Coding Plan",
+    aliases: ["moonshot", "kimi-coding"]
+  }
+];
 
 loadDotEnv(path.resolve(process.cwd(), ".env"));
 
@@ -36,7 +43,7 @@ async function main() {
   const command = args[0];
 
   if (!command || command === "help" || command === "-h" || command === "--help") {
-    printHelp();
+    printHelp(opts);
     return;
   }
 
@@ -75,7 +82,8 @@ async function main() {
   }
 }
 
-function printHelp() {
+function printHelp(opts = {}) {
+  const color = makeColor({ ...opts, stream: process.stdout });
   console.log(`MengMeng (萌萌) - tiny Claude Code provider assistant
 
 Usage:
@@ -91,8 +99,7 @@ Usage:
   mm export [--redact]
   mm import <file>
 
-Supported providers:
-  kimi    Kimi Coding Plan`);
+${formatSupportedProviders(color)}`);
 }
 
 function parseGlobalArgs(argv) {
@@ -124,6 +131,58 @@ function parseFlags(args, specs = {}) {
     }
   }
   return { flags, rest };
+}
+
+function normalizeProvider(value = "") {
+  const lower = value.trim().toLowerCase();
+  const hit = SUPPORTED_PROVIDERS.find((provider) => provider.id === lower || provider.aliases.includes(lower));
+  return hit ? hit.id : lower;
+}
+
+function isSupportedProvider(value) {
+  return SUPPORTED_PROVIDERS.some((provider) => provider.id === value);
+}
+
+function formatSupportedProviders(color = makeColor({ noColor: true })) {
+  return [
+    color.bold("Supported providers:"),
+    ...SUPPORTED_PROVIDERS.map((provider) => `  ${color.cyan(provider.id.padEnd(8))} ${color.gray(provider.name)}`)
+  ].join("\n");
+}
+
+function formatUnsupportedProvider(input = "") {
+  const color = makeColor({ stream: process.stderr });
+  const suggestion = nearestProvider(input);
+  const lines = [`Provider ${color.yellow(`"${input}"`)} is not supported yet.`];
+  if (suggestion) lines.push(`Did you mean: ${color.cyan(`mm add ${suggestion}`)}`);
+  lines.push("", formatSupportedProviders(color));
+  return lines.join("\n");
+}
+
+function nearestProvider(input = "") {
+  const lower = input.trim().toLowerCase();
+  if (!lower) return "";
+  let best = { id: "", distance: Infinity };
+  for (const provider of SUPPORTED_PROVIDERS) {
+    for (const candidate of [provider.id, ...provider.aliases]) {
+      const distance = levenshtein(lower, candidate);
+      if (distance < best.distance) best = { id: provider.id, distance };
+    }
+  }
+  return best.distance <= Math.max(2, Math.floor(lower.length / 2)) ? best.id : "";
+}
+
+function levenshtein(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  return dp[a.length][b.length];
 }
 
 async function initCommand(args, opts) {
@@ -281,9 +340,10 @@ async function addCommand(args, opts) {
     mode: "value",
     "key-env": "value"
   });
-  const provider = rest[0];
+  const providerInput = rest[0];
+  const provider = normalizeProvider(providerInput);
   if (!provider) throw new Error("usage: mm add <provider>");
-  if (provider !== "kimi") throw new Error(`provider "${provider}" is not implemented yet; supported: kimi`);
+  if (!isSupportedProvider(provider)) throw new Error(formatUnsupportedProvider(providerInput));
 
   let mode = flags.mode || "";
   if (!mode && isInteractive() && !flags.yes) {
@@ -991,10 +1051,12 @@ function colorText(text, code) {
   return `\u001b[${code}m${text}\u001b[0m`;
 }
 
-function makeColor(opts) {
-  const enabled = !opts.noColor && process.stdout.isTTY;
+function makeColor(opts = {}) {
+  const stream = opts.stream || process.stdout;
+  const enabled = !opts.noColor && stream.isTTY;
   const wrap = (code, text) => (enabled ? `\u001b[${code}m${text}\u001b[0m` : text);
   return {
+    bold: (text) => wrap(1, text),
     green: (text) => wrap(32, text),
     cyan: (text) => wrap(36, text),
     yellow: (text) => wrap(33, text),
@@ -1047,5 +1109,7 @@ module.exports = {
   recommendMapping,
   mergeSettings,
   settingsForProfile,
-  detectStorageCandidates
+  detectStorageCandidates,
+  normalizeProvider,
+  formatUnsupportedProvider
 };
