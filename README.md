@@ -4,7 +4,7 @@ MengMeng 是一个很小的命令行工具，用来管理 Claude Code 的 provid
 配置。
 
 它现在只专注一件事：在 macOS、Linux、SSH 服务器、WSL、远程开发机这些
-终端环境里，更省心地配置和切换 Kimi Coding Plan。
+终端环境里，更省心地配置和切换 Kimi Coding Plan / Kimi API。
 
 命令名是 `mm`。
 
@@ -34,15 +34,15 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 目前已经实现：
 
 - `mm init` 首次初始化
-- `mm add kimi` 添加 Kimi Coding Plan profile
+- `mm add kimi` 添加 Kimi profile，支持 Kimi Coding Plan 和 Kimi API
 - 请求 Kimi models API，并自动推荐 Claude Code 模型映射
 - 可选开启 Claude Code power-user permission 设置
-- `mm list` 查看 profile，并显示缓存的 Kimi quota 状态
+- `mm list` 查看 profile，并显示缓存的 Kimi Coding Plan quota 状态
 - `mm use` 切换当前 provider，写入前自动备份
 - `show` / `export` / `import` / `remove` / `rollback`
 - 常用命令支持 `--json`，方便脚本使用
 
-目前只支持 Kimi Coding Plan。GLM、DeepSeek、MiMo、自定义 relay 这些都还
+目前只支持 Kimi。GLM、DeepSeek、MiMo、自定义 relay 这些都还
 没有实现，后面看实际需求再加。
 
 ## 安装
@@ -122,22 +122,33 @@ mm init
 会优先推荐把 MengMeng profiles 存到 iCloud，方便多台机器共享配置。交互选
 择支持方向键 / `j` / `k` / 数字快捷键，并用颜色高亮当前选项。
 
-添加 Kimi Coding Plan：
+添加 Kimi：
 
 ```sh
 mm add kimi
 ```
 
-非交互使用时，可以用环境变量传 token：
+交互里可以选择：
+
+- Kimi Coding Plan
+- Kimi API key
+
+非交互使用 Kimi Coding Plan：
 
 ```sh
-KIMI_CODE_API_KEY=sk-xxx mm add kimi --yes
+KIMI_CODE_API_KEY=sk-xxx mm add kimi --mode coding-plan --yes
 ```
 
-或者指定读取哪个环境变量：
+非交互使用 Kimi API：
 
 ```sh
-KIMI_CODE_API_KEY=sk-xxx mm add kimi --key-env KIMI_CODE_API_KEY --yes
+KIMI_API_KEY=sk-xxx mm add kimi --mode api --yes
+```
+
+也可以指定读取哪个环境变量：
+
+```sh
+MOONSHOT_API_KEY=sk-xxx mm add kimi --mode api --key-env MOONSHOT_API_KEY --yes
 ```
 
 切换 Claude Code 到这个 profile：

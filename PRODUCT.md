@@ -49,6 +49,7 @@ The MVP supports Claude Code only.
 Initial provider targets:
 
 - Kimi Coding Plan.
+- Kimi API.
 - Xiaomi MiMo Coding Plan.
 - GLM Coding Plan.
 - DeepSeek.

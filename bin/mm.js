@@ -9,12 +9,13 @@ const VERSION = 1;
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";
 const KIMI_MODELS_URL = "https://api.kimi.com/coding/v1/models";
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
+const KIMI_API_ORIGINS = ["https://api.moonshot.ai", "https://api.moonshot.cn"];
 const QUOTA_CACHE_MS = 5 * 60 * 1000;
 const SUPPORTED_PROVIDERS = [
   {
     id: "kimi",
-    name: "Kimi Coding Plan",
-    aliases: ["moonshot", "kimi-coding"]
+    name: "Kimi Coding Plan / Kimi API",
+    aliases: ["moonshot", "kimi-coding", "kimi-api"]
   }
 ];
 
@@ -355,24 +356,25 @@ async function addCommand(args, opts) {
       },
       {
         label: "Kimi API key",
-        description: "not implemented in this MVP",
+        description: "Moonshot/Kimi Open Platform API",
         value: "api"
       }
     ], 0);
     mode = selected.value;
   }
   if (!mode) mode = "coding-plan";
-  if (mode !== "coding-plan") throw new Error("Kimi API mode is not implemented yet; use Kimi Coding Plan");
+  if (!["coding-plan", "api"].includes(mode)) throw new Error(`unsupported Kimi mode "${mode}"; use coding-plan or api`);
 
-  let profileName = flags.name || "kimi";
+  let profileName = flags.name || (mode === "api" ? "kimi-api" : "kimi");
   if (isInteractive() && !flags.yes) {
     const answer = await ask(`Profile name [${profileName}]: `);
     if (answer.trim()) profileName = answer.trim();
   }
 
-  const apiKey = await resolveApiKey(flags);
-  console.error("Testing Kimi Coding Plan...");
-  const models = await fetchKimiModels(apiKey);
+  const apiKey = await resolveApiKey(flags, keyDefaultsForMode(mode));
+  console.error(`Testing ${mode === "api" ? "Kimi API" : "Kimi Coding Plan"}...`);
+  const adapter = await resolveKimiAdapter(mode, apiKey);
+  const models = adapter.models;
   let mapping = recommendMapping(models);
 
   if (isInteractive() && !flags.yes) {
@@ -386,10 +388,12 @@ async function addCommand(args, opts) {
   }
 
   let quotaCache = null;
-  try {
-    quotaCache = await fetchKimiQuota(apiKey);
-  } catch {
-    quotaCache = null;
+  if (mode === "coding-plan") {
+    try {
+      quotaCache = await fetchKimiQuota(apiKey);
+    } catch {
+      quotaCache = null;
+    }
   }
 
   const config = requireConfig();
@@ -407,7 +411,7 @@ async function addCommand(args, opts) {
     name: profileName,
     provider: "kimi",
     mode,
-    baseUrl: KIMI_CODING_BASE,
+    baseUrl: adapter.baseUrl,
     apiKey,
     model: mapping,
     env: {
@@ -416,7 +420,7 @@ async function addCommand(args, opts) {
     },
     powerUser,
     quotaCache,
-    modelSource: "kimi-coding-models-api",
+    modelSource: adapter.modelSource,
     createdAt: existing?.createdAt || now,
     updatedAt: now
   };
@@ -601,19 +605,68 @@ function settingsForProfile(profile, { redact }) {
   return settings;
 }
 
+function keyDefaultsForMode(mode) {
+  if (mode === "api") {
+    return {
+      envNames: ["KIMI_API_KEY", "MOONSHOT_API_KEY"],
+      prompt: "Moonshot / Kimi API key"
+    };
+  }
+  return {
+    envNames: ["KIMI_CODE_API_KEY"],
+    prompt: "Moonshot / Kimi Coding Plan API key"
+  };
+}
+
+async function resolveKimiAdapter(mode, apiKey) {
+  if (mode === "coding-plan") {
+    return {
+      baseUrl: KIMI_CODING_BASE,
+      modelSource: "kimi-coding-models-api",
+      models: await fetchKimiCodingModels(apiKey)
+    };
+  }
+
+  const errors = [];
+  for (const origin of KIMI_API_ORIGINS) {
+    try {
+      return {
+        baseUrl: `${origin}/anthropic`,
+        modelSource: `${origin}/v1/models`,
+        models: await fetchKimiAPIModels(apiKey, origin)
+      };
+    } catch (error) {
+      errors.push(`${origin}: ${error.message}`);
+    }
+  }
+  throw new Error(`Kimi API key did not work with known Moonshot endpoints:\n${errors.map((e) => `  - ${e}`).join("\n")}`);
+}
+
 function mergeSettings(target, generated) {
   target.env = { ...(target.env || {}), ...generated.env };
   if (generated.skipDangerousModePermissionPrompt) target.skipDangerousModePermissionPrompt = true;
   if (generated.skipAutoPermissionPrompt) target.skipAutoPermissionPrompt = true;
 }
 
-async function fetchKimiModels(apiKey) {
+async function fetchKimiCodingModels(apiKey) {
   const res = await fetch(KIMI_MODELS_URL, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`Kimi models request failed: HTTP ${res.status}: ${text}`);
   return parseKimiModels(JSON.parse(text));
+}
+
+async function fetchKimiAPIModels(apiKey, origin) {
+  const url = `${origin}/v1/models`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`models request failed: HTTP ${res.status}: ${text}`);
+  const models = parseKimiModels(JSON.parse(text));
+  if (!models.length) throw new Error("models request returned no models");
+  return models;
 }
 
 function parseKimiModels(body) {
@@ -734,7 +787,7 @@ async function chooseModel(slot, models, current) {
   return selected.value;
 }
 
-async function resolveApiKey(flags) {
+async function resolveApiKey(flags, defaults) {
   if (flags["key-env"]) {
     const value = process.env[flags["key-env"]];
     if (!value) throw new Error(`env var ${flags["key-env"]} is empty`);
@@ -745,9 +798,11 @@ async function resolveApiKey(flags) {
     if (!value.trim()) throw new Error("stdin did not contain an API key");
     return value.trim();
   }
-  if (process.env.KIMI_CODE_API_KEY) return process.env.KIMI_CODE_API_KEY.trim();
-  if (!isInteractive()) throw new Error("missing API key; pass --key-env KIMI_CODE_API_KEY or --key-stdin");
-  const value = await ask("Moonshot / Kimi Coding Plan API key:\n> ");
+  for (const envName of defaults.envNames) {
+    if (process.env[envName]) return process.env[envName].trim();
+  }
+  if (!isInteractive()) throw new Error(`missing API key; pass --key-env ${defaults.envNames[0]} or --key-stdin`);
+  const value = await ask(`${defaults.prompt}:\n> `);
   if (!value.trim()) throw new Error("API key is required");
   return value.trim();
 }
@@ -844,6 +899,7 @@ function printJSON(value) {
 
 function displayProvider(profile) {
   if (profile.provider === "kimi" && profile.mode === "coding-plan") return "Kimi Coding";
+  if (profile.provider === "kimi" && profile.mode === "api") return "Kimi API";
   return `${profile.provider} ${profile.mode}`;
 }
 

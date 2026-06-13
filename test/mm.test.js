@@ -6,6 +6,7 @@ const {
   parseKimiQuota,
   recommendMapping,
   mergeSettings,
+  settingsForProfile,
   detectStorageCandidates,
   normalizeProvider,
   formatUnsupportedProvider
@@ -90,4 +91,27 @@ test("provider names support aliases and friendly suggestions", () => {
   const message = formatUnsupportedProvider("kim");
   assert.match(message, /Did you mean: mm add kimi/);
   assert.match(message, /Supported providers:/);
+});
+
+test("settingsForProfile supports Kimi API mode", () => {
+  const settings = settingsForProfile({
+    baseUrl: "https://api.moonshot.ai/anthropic",
+    apiKey: "sk-api-test",
+    model: {
+      main: "kimi-k2.6",
+      opus: "kimi-k2.6",
+      sonnet: "kimi-k2.6",
+      haiku: "kimi-k2.6",
+      subagent: "kimi-k2.6"
+    },
+    env: {
+      ENABLE_TOOL_SEARCH: "false",
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144"
+    },
+    powerUser: false
+  }, { redact: false });
+
+  assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://api.moonshot.ai/anthropic");
+  assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "sk-api-test");
+  assert.equal(settings.env.ANTHROPIC_MODEL, "kimi-k2.6");
 });
