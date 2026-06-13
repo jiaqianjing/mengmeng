@@ -1,0 +1,15 @@
+{
+  "name": "mengmeng",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A tiny Claude Code provider assistant for Kimi, MiMo, GLM, DeepSeek, and custom coding-plan providers.",
+  "bin": {
+    "mm": "bin/mm.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
