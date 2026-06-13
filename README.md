@@ -39,7 +39,7 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - 可选开启 Claude Code power-user permission 设置
 - `mm list` 查看 profile，并显示缓存的 Kimi quota 状态
 - `mm use` 切换当前 provider，写入前自动备份
-- `show` / `emit` / `export` / `import` / `remove` / `rollback`
+- `show` / `export` / `import` / `remove` / `rollback`
 - 常用命令支持 `--json`，方便脚本使用
 
 目前只支持 Kimi Coding Plan。GLM、DeepSeek、MiMo、自定义 relay 这些都还
@@ -118,6 +118,10 @@ npm test
 mm init
 ```
 
+`mm init` 会检测当前系统和常见同步目录。macOS 上如果发现 iCloud Drive，
+会优先推荐把 MengMeng profiles 存到 iCloud，方便多台机器共享配置。交互选
+择支持方向键 / `j` / `k` / 数字快捷键，并用颜色高亮当前选项。
+
 添加 Kimi Coding Plan：
 
 ```sh
@@ -160,11 +164,10 @@ mm list [--refresh]
 mm current
 mm show <profile>
 mm use <profile>
-mm emit [profile] [--include-secrets|--redact]
 mm doctor
 mm remove <profile>
 mm rollback [backup-id]
-mm export [--include-secrets]
+mm export [--redact]
 mm import <file>
 ```
 
@@ -236,8 +239,8 @@ MENGMENG_CLAUDE_CONFIG=/path/to/settings.json
 ```
 
 注意：当前版本会把 profile 数据，包括 API token，存在本地 JSON 文件里，并
-设置为仅当前用户可读写。`mm export` 默认会隐藏 token。只有在你明确需要导
-出密钥时，才使用 `--include-secrets`。
+设置为仅当前用户可读写。`mm export` 默认会导出完整 profile，包括 token，
+方便迁移到另一台机器。需要分享给别人看结构时，使用 `--redact` 脱敏。
 
 ## 名字
 

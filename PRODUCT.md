@@ -273,16 +273,17 @@ The tool should avoid treating the live config as its only source of truth.
 
 ## Import And Export
 
-Export defaults to redacted output:
+Export defaults to complete output because it is mainly for moving MengMeng
+profiles between the user's own machines:
 
 ```sh
-mm export --redact > profiles.json
+mm export > private-profiles.json
 ```
 
-Including secrets must be explicit:
+Redaction is available for sharing or debugging:
 
 ```sh
-mm export --include-secrets > private-profiles.json
+mm export --redact > redacted-profiles.json
 ```
 
 Import should support:
@@ -290,36 +291,6 @@ Import should support:
 - Merging new profiles.
 - Replacing all profiles with confirmation.
 - Detecting duplicates by provider id and profile name.
-
-## Emit Claude Code Settings
-
-`mm emit [profile]` should print a Claude Code-ready settings JSON for the
-selected profile. If no profile is provided, emit the current profile.
-
-This is different from `mm export`:
-
-- `mm export` outputs MengMeng's profile data for backup/import.
-- `mm emit` outputs Claude Code settings that can be pasted into
-  `~/.claude/settings.json` on a machine without MengMeng.
-
-Because `emit` can expose secrets, it should ask before including API keys in an
-interactive terminal:
-
-```text
-This output can include API secrets and be pasted into Claude Code settings.
-Include secrets? [y/N]
-```
-
-Non-interactive usage should require an explicit flag:
-
-```sh
-mm emit kimi --include-secrets
-mm emit kimi --redact
-```
-
-The emitted JSON should include only the fields needed by Claude Code plus
-explicitly selected MengMeng-managed tuning fields. It should not include
-MengMeng metadata.
 
 ## Remove Profiles
 
@@ -410,11 +381,10 @@ mm list
 mm current
 mm show <profile>
 mm use <profile>
-mm emit [profile]
 mm doctor
 mm remove <profile>
 mm rollback [backup-id]
-mm export
+mm export [--redact]
 mm import <file>
 ```
 

@@ -15,9 +15,20 @@ loadDotEnv(path.resolve(process.cwd(), ".env"));
 
 if (require.main === module) {
   main().catch((error) => {
+    if (error instanceof UserCancelled) {
+      if (error.message) console.error(error.message);
+      process.exit(0);
+    }
     console.error(`Error: ${error.message}`);
     process.exit(1);
   });
+}
+
+class UserCancelled extends Error {
+  constructor(message = "Cancelled.") {
+    super(message);
+    this.name = "UserCancelled";
+  }
 }
 
 async function main() {
@@ -48,8 +59,6 @@ async function main() {
       return showCommand(args.slice(1), opts);
     case "use":
       return useCommand(args.slice(1), opts);
-    case "emit":
-      return emitCommand(args.slice(1), opts);
     case "doctor":
       return doctorCommand(opts);
     case "remove":
@@ -76,11 +85,10 @@ Usage:
   mm current
   mm show <profile>
   mm use <profile>
-  mm emit [profile] [--include-secrets|--redact]
   mm doctor
   mm remove <profile>
   mm rollback [backup-id]
-  mm export [--include-secrets]
+  mm export [--redact]
   mm import <file>
 
 Supported providers:
@@ -129,6 +137,9 @@ async function initCommand(args, opts) {
 
   if (existing?.initialized) {
     if (opts.json) return printJSON(existing);
+    if (!flags.yes && isInteractive()) {
+      return reconfigureInit(existing, configDir);
+    }
     console.log("MengMeng is already initialized.");
     console.log(`Profiles: ${existing.configDir}`);
     console.log(`Claude:   ${existing.claudeConfigPath}`);
@@ -140,9 +151,16 @@ async function initCommand(args, opts) {
   if (flags["config-dir"]) chosenConfigDir = expandHome(flags["config-dir"]);
   if (flags["claude-config"]) claudeConfigPath = expandHome(flags["claude-config"]);
   if (!flags.yes && isInteractive()) {
-    console.log("MengMeng first-run setup\n");
-    const storage = await ask(`Profile storage [${chosenConfigDir}]: `);
-    if (storage.trim()) chosenConfigDir = expandHome(storage.trim());
+    console.log("MengMeng first-run setup");
+    const detected = detectStorageCandidates(configDir);
+    const selected = await selectOption("Where should MengMeng store profiles?", detected, 0);
+    if (selected.value === "custom") {
+      const storage = await ask(`Custom profile storage path [${chosenConfigDir}]: `);
+      if (storage.trim()) chosenConfigDir = expandHome(storage.trim());
+    } else {
+      chosenConfigDir = selected.path;
+    }
+    console.error("");
     const claudePath = await ask(`Claude Code settings path [${claudeConfigPath}]: `);
     if (claudePath.trim()) claudeConfigPath = expandHome(claudePath.trim());
   }
@@ -166,6 +184,78 @@ async function initCommand(args, opts) {
   console.log(`Claude:   ${claudeConfigPath}`);
 }
 
+async function reconfigureInit(existing, defaultConfigDir) {
+  const selected = await selectOption("MengMeng is already initialized. What would you like to change?", [
+    {
+      label: "View current config",
+      description: "show paths and leave everything unchanged",
+      value: "view"
+    },
+    {
+      label: "Profile storage location",
+      description: "choose iCloud, local, or custom storage",
+      value: "storage"
+    },
+    {
+      label: "Claude Code settings path",
+      description: "change the settings.json file MengMeng writes",
+      value: "claude"
+    },
+    {
+      label: "Cancel",
+      description: "do nothing",
+      value: "cancel"
+    }
+  ], 0);
+
+  if (selected.value === "cancel") {
+    console.log("Cancelled.");
+    return;
+  }
+
+  if (selected.value === "view") {
+    console.log("MengMeng config:");
+    console.log(`Profiles: ${existing.configDir}`);
+    console.log(`Claude:   ${existing.claudeConfigPath}`);
+    return;
+  }
+
+  const updated = { ...existing, updatedAt: new Date().toISOString() };
+  if (selected.value === "storage") {
+    const detected = detectStorageCandidates(defaultConfigDir);
+    const current = {
+      label: "Current location",
+      description: existing.configDir,
+      path: existing.configDir,
+      value: existing.configDir
+    };
+    const storage = await selectOption("Where should MengMeng store profiles?", [current, ...detected], 0);
+    let nextDir = storage.path;
+    if (storage.value === "custom") {
+      const answer = await ask(`Custom profile storage path [${existing.configDir}]: `);
+      nextDir = answer.trim() ? expandHome(answer.trim()) : existing.configDir;
+    }
+    updated.configDir = nextDir;
+    mkdirp(nextDir);
+    const oldProfiles = path.join(existing.configDir, "profiles.json");
+    const newProfiles = path.join(nextDir, "profiles.json");
+    if (fs.existsSync(oldProfiles) && !fs.existsSync(newProfiles)) {
+      fs.copyFileSync(oldProfiles, newProfiles);
+    }
+    ensureStore(nextDir);
+  }
+
+  if (selected.value === "claude") {
+    const answer = await ask(`Claude Code settings path [${existing.claudeConfigPath}]: `);
+    if (answer.trim()) updated.claudeConfigPath = expandHome(answer.trim());
+  }
+
+  writeConfig(updated);
+  console.log("MengMeng config updated.");
+  console.log(`Profiles: ${updated.configDir}`);
+  console.log(`Claude:   ${updated.claudeConfigPath}`);
+}
+
 async function ensureInitialized(command, args, opts) {
   const config = readConfig();
   if (config?.initialized) return;
@@ -181,7 +271,7 @@ async function ensureInitialized(command, args, opts) {
   console.log("This only needs to be done once.");
   console.log("You can change these choices later with:\n\n  mm init\n");
   const ok = await ask("Continue setup now? [Y/n] ");
-  if (!confirmDefaultYes(ok)) throw new Error("cancelled; run `mm init` when you're ready");
+  if (!confirmDefaultYes(ok)) throw new UserCancelled("Cancelled. Run `mm init` when you're ready.");
   await initCommand([], opts);
 }
 
@@ -197,11 +287,19 @@ async function addCommand(args, opts) {
 
   let mode = flags.mode || "";
   if (!mode && isInteractive() && !flags.yes) {
-    console.log("How do you want to use Kimi?\n");
-    console.log("  1. Kimi Coding Plan (recommended for Claude Code)");
-    console.log("  2. Kimi API key (not implemented in this MVP)\n");
-    const answer = await ask("Select [1]: ");
-    mode = answer.trim() === "2" ? "api" : "coding-plan";
+    const selected = await selectOption("How do you want to use Kimi?", [
+      {
+        label: "Kimi Coding Plan",
+        description: "recommended for Claude Code",
+        value: "coding-plan"
+      },
+      {
+        label: "Kimi API key",
+        description: "not implemented in this MVP",
+        value: "api"
+      }
+    ], 0);
+    mode = selected.value;
   }
   if (!mode) mode = "coding-plan";
   if (mode !== "coding-plan") throw new Error("Kimi API mode is not implemented yet; use Kimi Coding Plan");
@@ -218,10 +316,7 @@ async function addCommand(args, opts) {
   let mapping = recommendMapping(models);
 
   if (isInteractive() && !flags.yes) {
-    console.log("\nClaude Code model mapping");
-    printMapping(mapping);
-    const ok = await ask("\nUse recommended mapping? [Y/n] ");
-    if (!confirmDefaultYes(ok)) mapping = await customizeMapping(models, mapping);
+    mapping = await editModelMapping(models, mapping);
   }
 
   let powerUser = Boolean(flags["power-user"]);
@@ -243,7 +338,7 @@ async function addCommand(args, opts) {
   const existing = store.profiles.find((p) => p.name === profileName);
   if (existing && !flags.yes && isInteractive()) {
     const ok = await ask(`Profile "${profileName}" already exists. Overwrite? [y/N] `);
-    if (!confirmDefaultNo(ok)) throw new Error("cancelled");
+    if (!confirmDefaultNo(ok)) throw new UserCancelled();
   } else if (existing && !flags.yes) {
     throw new Error(`profile "${profileName}" already exists; rerun with --yes to overwrite`);
   }
@@ -270,7 +365,7 @@ async function addCommand(args, opts) {
 
   if (opts.json) return printJSON(redactProfile(profile));
   console.log(`Saved provider: ${profileName}`);
-  if (quotaCache?.success) console.log(formatQuota(quotaCache, { noColor: true }));
+  if (quotaCache?.success) console.log(formatQuota(quotaCache, opts));
   if (isInteractive() && !flags.yes) {
     const useNow = await ask(`Use ${profileName} now? [Y/n] `);
     if (confirmDefaultYes(useNow)) await useProfile(profileName);
@@ -337,20 +432,6 @@ async function useCommand(args, opts) {
   console.log(`Current provider: ${name}`);
 }
 
-async function emitCommand(args, opts) {
-  const { flags, rest } = parseFlags(args);
-  const config = requireConfig();
-  const name = rest[0] || config.current;
-  if (!name) throw new Error("no profile selected");
-  const profile = loadProfile(name);
-  let includeSecrets = Boolean(flags["include-secrets"]);
-  if (!includeSecrets && !flags.redact && isInteractive()) {
-    console.error("This output can include API secrets and be pasted into Claude Code settings.");
-    includeSecrets = confirmDefaultNo(await ask("Include secrets? [y/N] "));
-  }
-  printJSON(settingsForProfile(profile, { redact: !includeSecrets }));
-}
-
 function doctorCommand(opts) {
   const config = requireConfig();
   const store = readStore(config.configDir);
@@ -377,8 +458,8 @@ async function removeCommand(args, opts) {
   if (config.current === name && !flags.yes) {
     if (!isInteractive()) throw new Error("profile is active; rerun with --yes to remove saved profile while leaving Claude settings unchanged");
     console.log(`"${name}" is currently active in Claude Code.`);
-    const ok = await ask("Remove saved profile but leave Claude Code settings as-is? [y/N] ");
-    if (!confirmDefaultNo(ok)) throw new Error("cancelled");
+    const ok = await ask("Remove saved profile but leave Claude Code settings as-is? [Y/n] ");
+    if (!confirmDefaultYes(ok)) throw new UserCancelled();
   }
   store.profiles.splice(index, 1);
   writeStore(config.configDir, store);
@@ -411,7 +492,7 @@ function exportCommand(args) {
   const { flags } = parseFlags(args);
   const config = requireConfig();
   const store = readStore(config.configDir);
-  if (!flags["include-secrets"]) store.profiles = store.profiles.map(redactProfile);
+  if (flags.redact) store.profiles = store.profiles.map(redactProfile);
   printJSON(store);
 }
 
@@ -546,23 +627,51 @@ function modelScore(model) {
   return score;
 }
 
-async function customizeMapping(models, mapping) {
+async function editModelMapping(models, mapping) {
+  let current = { ...mapping };
+  for (;;) {
+    const selected = await selectOption("Claude Code model mapping", modelMappingOptions(current), 0);
+    if (selected.value === "done") return current;
+    current[selected.value] = await chooseModel(modelSlotLabel(selected.value), models, current[selected.value]);
+  }
+}
+
+function modelMappingOptions(mapping) {
+  return [
+    {
+      label: "Use recommended mapping",
+      description: "press Enter without moving to keep these defaults",
+      value: "done"
+    },
+    { label: `Main     ${mapping.main}`, description: "ANTHROPIC_MODEL", value: "main" },
+    { label: `Opus     ${mapping.opus}`, description: "ANTHROPIC_DEFAULT_OPUS_MODEL", value: "opus" },
+    { label: `Sonnet   ${mapping.sonnet}`, description: "ANTHROPIC_DEFAULT_SONNET_MODEL", value: "sonnet" },
+    { label: `Haiku    ${mapping.haiku}`, description: "ANTHROPIC_DEFAULT_HAIKU_MODEL", value: "haiku" },
+    { label: `Subagent ${mapping.subagent}`, description: "CLAUDE_CODE_SUBAGENT_MODEL", value: "subagent" }
+  ];
+}
+
+function modelSlotLabel(slot) {
   return {
-    main: await chooseModel("Main", models, mapping.main),
-    opus: await chooseModel("Opus", models, mapping.opus),
-    sonnet: await chooseModel("Sonnet", models, mapping.sonnet),
-    haiku: await chooseModel("Haiku", models, mapping.haiku),
-    subagent: await chooseModel("Subagent", models, mapping.subagent)
-  };
+    main: "Main",
+    opus: "Opus",
+    sonnet: "Sonnet",
+    haiku: "Haiku",
+    subagent: "Subagent"
+  }[slot] || slot;
 }
 
 async function chooseModel(slot, models, current) {
-  console.log(`Select ${slot} model [${current}]:`);
-  models.forEach((model, index) => console.log(`  ${index + 1}. ${model.id}${model.displayName ? ` - ${model.displayName}` : ""}`));
-  console.log("  0. Keep current");
-  const answer = await ask("Select [0]: ");
-  const index = Number(answer);
-  return index > 0 && index <= models.length ? models[index - 1].id : current;
+  const options = [
+    { label: `Keep current (${current})`, value: current },
+    ...models.map((model) => ({
+      label: model.id,
+      description: model.displayName || "",
+      value: model.id
+    }))
+  ];
+  const selected = await selectOption(`Select ${slot} model`, options, 0);
+  return selected.value;
 }
 
 async function resolveApiKey(flags) {
@@ -693,7 +802,14 @@ function formatQuota(quota, opts) {
   const color = makeColor(opts);
   if (!quota.success) return `Quota: ${color.red(quota.error || "error")}`;
   if (!quota.tiers?.length) return `Quota: ${color.gray("unknown")}`;
-  return `Quota: ${quota.tiers.map((tier) => `${tier.name} ${Math.round(tier.usedPct)}% used${tier.resetTime ? ` reset ${tier.resetTime}` : ""}`).join("; ")}`;
+  return `Quota: ${quota.tiers.map((tier) => formatQuotaTier(tier, color)).join("; ")}`;
+}
+
+function formatQuotaTier(tier, color) {
+  const pctText = `${Math.round(tier.usedPct)}%`;
+  const paint = tier.usedPct >= 95 ? color.red : tier.usedPct >= 75 ? color.yellow : color.green;
+  const reset = tier.resetTime ? color.gray(` reset ${tier.resetTime}`) : "";
+  return `${color.cyan(tier.name)} ${paint(pctText)} used${reset}`;
 }
 
 function printMapping(mapping) {
@@ -751,11 +867,136 @@ function isInteractive() {
   return process.stdin.isTTY;
 }
 
+function detectStorageCandidates(defaultConfigDir) {
+  const candidates = [];
+  const add = (label, description, storagePath, value = storagePath) => {
+    if (value === "custom") {
+      candidates.push({ label, description, path: "", value });
+      return;
+    }
+    if (!storagePath) return;
+    const normalized = expandHome(storagePath);
+    if (value !== "custom" && candidates.some((candidate) => candidate.path === normalized)) return;
+    candidates.push({ label, description, path: normalized, value });
+  };
+
+  if (process.platform === "darwin") {
+    const iCloud = path.join(os.homedir(), "Library", "Mobile Documents", "com~apple~CloudDocs");
+    if (fs.existsSync(iCloud)) {
+      add("iCloud Drive", "recommended on macOS for multi-device sync", path.join(iCloud, "MengMeng"));
+    }
+  }
+
+  addIfExists(candidates, "Dropbox", "sync profiles with Dropbox", path.join(os.homedir(), "Dropbox", "MengMeng"));
+  addIfExists(candidates, "OneDrive", "sync profiles with OneDrive", findOneDrivePath());
+  addIfExists(candidates, "Syncthing", "sync profiles with Syncthing", path.join(os.homedir(), "Sync", "MengMeng"));
+
+  add("Local config", "simple local-only storage", defaultConfigDir);
+  add("Custom path", "choose another directory", "", "custom");
+
+  return candidates;
+}
+
+function addIfExists(candidates, label, description, storagePath) {
+  if (!storagePath) return;
+  const base = path.dirname(storagePath);
+  if (!fs.existsSync(base)) return;
+  const normalized = expandHome(storagePath);
+  if (candidates.some((candidate) => candidate.path === normalized)) return;
+  candidates.push({ label, description, path: normalized, value: normalized });
+}
+
+function findOneDrivePath() {
+  const cloudStorage = path.join(os.homedir(), "Library", "CloudStorage");
+  if (fs.existsSync(cloudStorage)) {
+    const hit = fs.readdirSync(cloudStorage).find((entry) => entry.toLowerCase().startsWith("onedrive"));
+    if (hit) return path.join(cloudStorage, hit, "MengMeng");
+  }
+  const homeHit = fs.readdirSync(os.homedir()).find((entry) => entry.toLowerCase().startsWith("onedrive"));
+  return homeHit ? path.join(os.homedir(), homeHit, "MengMeng") : "";
+}
+
+async function selectOption(message, options, defaultIndex = 0) {
+  if (!isInteractive() || typeof process.stdin.setRawMode !== "function") {
+    return options[defaultIndex];
+  }
+
+  return new Promise((resolve, reject) => {
+    const input = process.stdin;
+    const output = process.stderr;
+    let index = defaultIndex;
+    let renderedLines = 0;
+    let closed = false;
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      input.setRawMode(false);
+      input.pause();
+      input.off("data", onData);
+      output.write("\u001b[?25h");
+    };
+
+    const render = () => {
+      if (renderedLines > 0) output.write(`\u001b[${renderedLines}A`);
+      const lines = [message];
+      for (let i = 0; i < options.length; i++) {
+        const option = options[i];
+        const selected = i === index;
+        const prefix = selected ? colorText("›", "36") : " ";
+        const label = selected ? colorText(option.label, "36;1") : option.label;
+        const description = option.description ? colorText(` ${option.description}`, selected ? "90" : "90") : "";
+        lines.push(` ${prefix} ${label}${description}`);
+      }
+      lines.push(colorText("Use ↑/↓, j/k, or number keys. Press Enter to confirm.", "90"));
+      for (const line of lines) output.write(`\u001b[2K\r${line}\n`);
+      renderedLines = lines.length;
+    };
+
+    const finish = () => {
+      cleanup();
+      if (renderedLines > 0) output.write(`\u001b[${renderedLines}A`);
+      output.write(`\u001b[2K\r${message} ${colorText(options[index].label, "36;1")}\n`);
+      for (let i = 1; i < renderedLines; i++) output.write("\u001b[2K\r\n");
+      if (renderedLines > 1) output.write(`\u001b[${renderedLines - 1}A`);
+      resolve(options[index]);
+    };
+
+    const onData = (chunk) => {
+      const key = chunk.toString("utf8");
+      if (key === "\u0003") {
+        cleanup();
+        reject(new UserCancelled());
+        return;
+      }
+      if (key === "\r" || key === "\n") return finish();
+      if (key === "\u001b[A" || key === "k") index = (index - 1 + options.length) % options.length;
+      else if (key === "\u001b[B" || key === "j") index = (index + 1) % options.length;
+      else if (/^[1-9]$/.test(key)) {
+        const n = Number(key) - 1;
+        if (n >= 0 && n < options.length) index = n;
+      }
+      render();
+    };
+
+    output.write("\u001b[?25l");
+    input.setRawMode(true);
+    input.resume();
+    input.on("data", onData);
+    render();
+  });
+}
+
+function colorText(text, code) {
+  return `\u001b[${code}m${text}\u001b[0m`;
+}
+
 function makeColor(opts) {
   const enabled = !opts.noColor && process.stdout.isTTY;
   const wrap = (code, text) => (enabled ? `\u001b[${code}m${text}\u001b[0m` : text);
   return {
     green: (text) => wrap(32, text),
+    cyan: (text) => wrap(36, text),
     yellow: (text) => wrap(33, text),
     red: (text) => wrap(31, text),
     gray: (text) => wrap(90, text)
@@ -805,5 +1046,6 @@ module.exports = {
   parseKimiQuota,
   recommendMapping,
   mergeSettings,
-  settingsForProfile
+  settingsForProfile,
+  detectStorageCandidates
 };

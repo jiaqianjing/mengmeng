@@ -5,7 +5,8 @@ const {
   parseKimiModels,
   parseKimiQuota,
   recommendMapping,
-  mergeSettings
+  mergeSettings,
+  detectStorageCandidates
 } = require("../bin/mm.js");
 
 test("parseKimiModels normalizes Kimi model list", () => {
@@ -74,4 +75,10 @@ test("mergeSettings preserves unrelated settings", () => {
   assert.equal(target.env.KEEP_ME, "yes");
   assert.equal(target.env.ANTHROPIC_BASE_URL, "https://api.kimi.com/coding");
   assert.equal(target.skipAutoPermissionPrompt, true);
+});
+
+test("detectStorageCandidates always includes local and custom choices", () => {
+  const choices = detectStorageCandidates("/tmp/mengmeng-default");
+  assert.ok(choices.find((choice) => choice.label === "Local config" && choice.path === "/tmp/mengmeng-default"));
+  assert.ok(choices.find((choice) => choice.label === "Custom path" && choice.value === "custom"));
 });
