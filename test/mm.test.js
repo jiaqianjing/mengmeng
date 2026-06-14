@@ -7,6 +7,7 @@ const path = require("node:path");
 const { execFile } = require("node:child_process");
 
 const {
+  APP_VERSION,
   parseKimiModels,
   parseKimiQuota,
   parseKimiBalance,
@@ -24,6 +25,8 @@ const {
   formatUnsupportedProvider
 } = require("../bin/mm.js");
 
+const packageJson = require("../package.json");
+
 const plainColor = {
   bold: (text) => text,
   active: (text) => text,
@@ -33,6 +36,27 @@ const plainColor = {
   red: (text) => text,
   gray: (text) => text
 };
+
+test("application version is controlled from package and CLI constant", async () => {
+  assert.equal(APP_VERSION, "0.0.1");
+  assert.equal(packageJson.version, APP_VERSION);
+
+  const cwd = path.resolve(__dirname, "..");
+  const version = await execFileAsync(process.execPath, ["bin/mm.js", "version"], { cwd });
+  assert.equal(version.stdout.trim(), `MengMeng ${APP_VERSION}`);
+
+  const short = await execFileAsync(process.execPath, ["bin/mm.js", "--version"], { cwd });
+  assert.equal(short.stdout.trim(), `MengMeng ${APP_VERSION}`);
+});
+
+test("upgrade does not self-install from a source checkout by default", async () => {
+  const cwd = path.resolve(__dirname, "..");
+  const { stdout } = await execFileAsync(process.execPath, ["bin/mm.js", "--json", "upgrade"], { cwd });
+  const result = JSON.parse(stdout);
+  assert.equal(result.success, false);
+  assert.equal(result.reason, "source-checkout");
+  assert.equal(result.version, APP_VERSION);
+});
 
 test("parseKimiModels normalizes Kimi model list", () => {
   const models = parseKimiModels({

@@ -4,8 +4,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
+const { spawn } = require("node:child_process");
 
-const VERSION = 1;
+const APP_VERSION = "0.0.1";
+const STORE_VERSION = 1;
+const INSTALL_SH_URL = "https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.sh";
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";
 const KIMI_MODELS_URL = "https://api.kimi.com/coding/v1/models";
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
@@ -59,8 +62,18 @@ async function main() {
     return;
   }
 
+  if (command === "version" || command === "-v" || command === "--version") {
+    versionCommand(opts);
+    return;
+  }
+
   if (command === "init") {
     await initCommand(args.slice(1), opts);
+    return;
+  }
+
+  if (command === "upgrade") {
+    await upgradeCommand(args.slice(1), opts);
     return;
   }
 
@@ -100,6 +113,8 @@ function printHelp(opts = {}) {
 
 ${color.cyan("Usage:")}
   ${color.gray("mm init")}
+  ${color.gray("mm version")}
+  ${color.gray("mm upgrade")}
   ${color.gray("mm add <provider>")}
   ${color.gray("mm list")}
   ${color.gray("mm current")}
@@ -721,6 +736,57 @@ function rollbackCommand(args, opts) {
   console.log(`Rolled back Claude settings from ${source}`);
 }
 
+function versionCommand(opts) {
+  if (opts.json) return printJSON({ name: "mengmeng", version: APP_VERSION });
+  console.log(`MengMeng ${APP_VERSION}`);
+}
+
+async function upgradeCommand(args, opts) {
+  const { flags, rest } = parseFlags(args, {
+    "bin-dir": "value",
+    "install-url": "value"
+  });
+  if (flags.help || rest.includes("-h")) {
+    printUpgradeHelp(opts);
+    return;
+  }
+
+  const binDir = flags["bin-dir"] ? expandHome(flags["bin-dir"]) : getSelfInstallDir();
+  const selfPath = realSelfPath();
+  if (!flags.force && isHomebrewInstall(selfPath)) {
+    const message = "MengMeng appears to be managed by Homebrew. Use `brew upgrade mengmeng` or rerun with `mm upgrade --force`.";
+    if (opts.json) return printJSON({ success: false, version: APP_VERSION, binDir, reason: "homebrew" });
+    throw new Error(message);
+  }
+  if (!flags.force && isSourceCheckout(selfPath)) {
+    const message = [
+      "MengMeng appears to be running from a source checkout.",
+      "Use `git pull` in the repository, or rerun with `mm upgrade --force` to overwrite the current bin directory."
+    ].join(" ");
+    if (opts.json) return printJSON({ success: false, version: APP_VERSION, binDir, reason: "source-checkout" });
+    throw new Error(message);
+  }
+
+  const installUrl = flags["install-url"] || process.env.MENGMENG_INSTALL_SH_URL || INSTALL_SH_URL;
+  const script = await fetchText(installUrl);
+  const installArgs = ["-s", "--", "--bin-dir", binDir, "--force"];
+  await runInstaller(script, installArgs, opts);
+
+  if (opts.json) return printJSON({ success: true, version: APP_VERSION, binDir });
+}
+
+function printUpgradeHelp(opts = {}) {
+  const color = makeColor({ ...opts, stream: process.stdout });
+  console.log(`${color.bold("Usage:")}
+  ${color.gray("mm upgrade")}
+  ${color.gray("mm upgrade --bin-dir <dir>")}
+
+${color.bold("Options:")}
+  ${color.gray("--bin-dir <dir>")}      Install directory, defaults to the current mm executable directory
+  ${color.gray("--install-url <url>")}  Override install.sh URL
+  ${color.gray("--force")}              Allow upgrade from a source checkout`);
+}
+
 function exportCommand(args) {
   const { flags } = parseFlags(args);
   const config = requireConfig();
@@ -1204,6 +1270,67 @@ function getClaudeConfigPath() {
   return expandHome(process.env.MENGMENG_CLAUDE_CONFIG || path.join(os.homedir(), ".claude", "settings.json"));
 }
 
+function realSelfPath() {
+  try {
+    return fs.realpathSync(invokedSelfPath());
+  } catch {
+    return invokedSelfPath();
+  }
+}
+
+function getSelfInstallDir() {
+  return path.dirname(invokedSelfPath());
+}
+
+function invokedSelfPath() {
+  return path.resolve(process.argv[1] || "mm");
+}
+
+function isSourceCheckout(file) {
+  if (!file) return false;
+  const dir = path.dirname(file);
+  return path.basename(file) === "mm.js"
+    && path.basename(dir) === "bin"
+    && fs.existsSync(path.join(dir, "..", "package.json"));
+}
+
+function isHomebrewInstall(file) {
+  return file.split(path.sep).includes("Cellar") || file.includes(`${path.sep}Homebrew${path.sep}`);
+}
+
+async function fetchText(url) {
+  if (url.startsWith("file://")) {
+    return fs.readFileSync(new URL(url), "utf8");
+  }
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`failed to download ${url}: HTTP ${response.status}`);
+  return response.text();
+}
+
+function runInstaller(script, args, opts) {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const child = spawn("sh", args, {
+      stdio: opts.json ? ["pipe", "pipe", "pipe"] : ["pipe", "inherit", "inherit"]
+    });
+    if (opts.json) {
+      child.stdout.on("data", (chunk) => (stdout += chunk));
+      child.stderr.on("data", (chunk) => (stderr += chunk));
+    }
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const detail = (stderr || stdout).trim();
+      reject(new Error(`installer failed with exit code ${code}${detail ? `: ${detail}` : ""}`));
+    });
+    child.stdin.end(script);
+  });
+}
+
 function readConfig() {
   return readJSONIfExists(getConfigPath());
 }
@@ -1220,19 +1347,19 @@ function writeConfig(config) {
 
 function ensureStore(configDir) {
   const storePath = path.join(configDir, "profiles.json");
-  if (!fs.existsSync(storePath)) writeJSONAtomic(storePath, { version: VERSION, profiles: [] });
+  if (!fs.existsSync(storePath)) writeJSONAtomic(storePath, { version: STORE_VERSION, profiles: [] });
 }
 
 function readStore(configDir) {
   ensureStore(configDir);
   const store = readJSONIfExists(path.join(configDir, "profiles.json")) || {};
-  store.version = VERSION;
+  store.version = STORE_VERSION;
   store.profiles ||= [];
   return store;
 }
 
 function writeStore(configDir, store) {
-  store.version = VERSION;
+  store.version = STORE_VERSION;
   writeJSONAtomic(path.join(configDir, "profiles.json"), store);
 }
 
@@ -1690,6 +1817,7 @@ function loadDotEnv(file) {
 }
 
 module.exports = {
+  APP_VERSION,
   parseKimiModels,
   parseKimiQuota,
   parseKimiBalance,

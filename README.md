@@ -56,6 +56,8 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - `mm list` 查看 profile，显示 Coding Plan quota、API 余额、连通性状态和当前 active provider
 - `mm use` 切换当前 provider，写入前自动备份
 - `show` / `export` / `import` / `remove` / `rollback`
+- `version` 查看当前 MengMeng 版本
+- `upgrade` 通过安装脚本升级当前 `mm`
 - 常用命令支持 `--json`，方便脚本使用
 
 ## 当前支持的供应商
@@ -110,6 +112,16 @@ curl -fsSL https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.s
 
 安装脚本只会放置 `mm` 命令，不会修改 Claude Code 配置，也不会自动执行
 `mm init`。
+
+升级当前 `mm`：
+
+```sh
+mm upgrade
+```
+
+`mm upgrade` 默认会把最新版本安装到当前 `mm` 所在目录。源码 checkout 里运行时，
+建议用 `git pull` 更新；如果确实要覆盖当前 bin 目录，可以使用
+`mm upgrade --force`。
 
 ### Homebrew 安装
 
@@ -229,6 +241,8 @@ mm doctor
 
 ```text
 mm init
+mm version
+mm upgrade
 mm add kimi
 mm add deepseek
 mm list
