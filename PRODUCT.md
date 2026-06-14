@@ -50,9 +50,9 @@ Initial provider targets:
 
 - Kimi Coding Plan.
 - Kimi API.
+- DeepSeek API.
 - Xiaomi MiMo Coding Plan.
 - GLM Coding Plan.
-- DeepSeek.
 - Custom OpenAI-compatible or Anthropic-compatible relay.
 
 Core workflows:

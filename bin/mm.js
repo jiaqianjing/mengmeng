@@ -10,6 +10,10 @@ const KIMI_CODING_BASE = "https://api.kimi.com/coding";
 const KIMI_MODELS_URL = "https://api.kimi.com/coding/v1/models";
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 const KIMI_API_ORIGINS = ["https://api.moonshot.ai", "https://api.moonshot.cn"];
+const DEEPSEEK_API_ORIGIN = "https://api.deepseek.com";
+const DEEPSEEK_ANTHROPIC_BASE = `${DEEPSEEK_API_ORIGIN}/anthropic`;
+const DEEPSEEK_MODELS_URL = `${DEEPSEEK_API_ORIGIN}/models`;
+const DEEPSEEK_BALANCE_URL = `${DEEPSEEK_API_ORIGIN}/user/balance`;
 const PROBE_PROMPT = "这是一个接口测试，请返回 \"ok\" 即可。";
 const PROBE_MAX_TOKENS = 8;
 const PROBE_TIMEOUT_MS = 20000;
@@ -18,6 +22,11 @@ const SUPPORTED_PROVIDERS = [
     id: "kimi",
     name: "Kimi Coding Plan / Kimi API",
     aliases: ["moonshot", "kimi-coding", "kimi-api"]
+  },
+  {
+    id: "deepseek",
+    name: "DeepSeek API",
+    aliases: ["deepseek-api", "ds"]
   }
 ];
 
@@ -347,7 +356,12 @@ async function addCommand(args, opts) {
   const provider = normalizeProvider(providerInput);
   if (!provider) throw new Error("usage: mm add <provider>");
   if (!isSupportedProvider(provider)) throw new Error(formatUnsupportedProvider(providerInput));
+  if (provider === "kimi") return addKimiCommand(flags, opts);
+  if (provider === "deepseek") return addDeepSeekCommand(flags, opts);
+  throw new Error(formatUnsupportedProvider(providerInput));
+}
 
+async function addKimiCommand(flags, opts) {
   let mode = flags.mode || "";
   if (!mode && isInteractive() && !flags.yes) {
     const selected = await selectOption("How do you want to use Kimi?", [
@@ -452,6 +466,85 @@ async function addCommand(args, opts) {
   }
 }
 
+async function addDeepSeekCommand(flags, opts) {
+  const mode = flags.mode || "api";
+  if (mode !== "api") throw new Error(`unsupported DeepSeek mode "${mode}"; use api`);
+
+  let profileName = flags.name || "deepseek";
+  if (isInteractive() && !flags.yes) {
+    const answer = await ask(`Profile name [${profileName}]: `);
+    if (answer.trim()) profileName = answer.trim();
+  }
+
+  const apiKey = await resolveApiKey(flags, keyDefaultsForProvider("deepseek"));
+  console.error("Testing DeepSeek API...");
+  const adapter = await resolveDeepSeekAdapter(apiKey);
+  const models = adapter.models;
+  let mapping = recommendDeepSeekMapping(models);
+
+  if (isInteractive() && !flags.yes) {
+    mapping = await editModelMapping(models, mapping);
+  }
+
+  let powerUser = Boolean(flags["power-user"]);
+  if (isInteractive() && !flags.yes) {
+    const answer = await ask("Enable Claude Code power-user permission settings? [y/N] ");
+    powerUser = confirmDefaultNo(answer);
+  }
+
+  let balanceCache = null;
+  try {
+    balanceCache = await fetchDeepSeekBalance(apiKey);
+  } catch {
+    balanceCache = null;
+  }
+
+  console.error("Checking Claude Code request path...");
+  const config = requireConfig();
+  const store = readStore(config.configDir);
+  const now = new Date().toISOString();
+  const existing = store.profiles.find((p) => p.name === profileName);
+  if (existing && !flags.yes && isInteractive()) {
+    const ok = await ask(`Profile "${profileName}" already exists. Overwrite? [y/N] `);
+    if (!confirmDefaultNo(ok)) throw new UserCancelled();
+  } else if (existing && !flags.yes) {
+    throw new Error(`profile "${profileName}" already exists; rerun with --yes to overwrite`);
+  }
+
+  const profile = {
+    name: profileName,
+    provider: "deepseek",
+    mode,
+    baseUrl: adapter.baseUrl,
+    apiKey,
+    model: mapping,
+    env: {
+      ENABLE_TOOL_SEARCH: "false",
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144"
+    },
+    powerUser,
+    quotaCache: null,
+    balanceCache,
+    statusCache: null,
+    apiOrigin: adapter.apiOrigin,
+    modelSource: adapter.modelSource,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+  profile.statusCache = await probeProfileStatus(profile);
+  upsertProfile(store, profile);
+  writeStore(config.configDir, store);
+
+  if (opts.json) return printJSON(redactProfile(profile));
+  console.log(`Saved provider: ${profileName}`);
+  if (balanceCache?.success) console.log(formatBalance(balanceCache, opts));
+  console.log(formatProfileStatus(profile, opts));
+  if (isInteractive() && !flags.yes) {
+    const useNow = await ask(`Use ${profileName} now? [Y/n] `);
+    if (confirmDefaultYes(useNow)) await useProfile(profileName);
+  }
+}
+
 async function listCommand(args, opts) {
   if (args.length) throw new Error("usage: mm list");
   const config = requireConfig();
@@ -473,6 +566,18 @@ async function listCommand(args, opts) {
     if (profile.provider === "kimi" && profile.mode === "api") {
       try {
         profile.balanceCache = await fetchKimiAPIBalance(kimiAPIOriginForProfile(profile), profile.apiKey);
+      } catch (error) {
+        profile.balanceCache = {
+          success: false,
+          provider: profile.provider,
+          queriedAt: new Date().toISOString(),
+          error: error.message
+        };
+      }
+    }
+    if (profile.provider === "deepseek" && profile.mode === "api") {
+      try {
+        profile.balanceCache = await fetchDeepSeekBalance(profile.apiKey);
       } catch (error) {
         profile.balanceCache = {
           success: false,
@@ -657,6 +762,16 @@ function keyDefaultsForMode(mode) {
   };
 }
 
+function keyDefaultsForProvider(provider) {
+  if (provider === "deepseek") {
+    return {
+      envNames: ["DEEPSEEK_API_KEY"],
+      prompt: "DeepSeek API key"
+    };
+  }
+  throw new Error(`unknown provider "${provider}"`);
+}
+
 async function resolveKimiAdapter(mode, apiKey) {
   if (mode === "coding-plan") {
     return {
@@ -681,6 +796,15 @@ async function resolveKimiAdapter(mode, apiKey) {
     }
   }
   throw new Error(`Kimi API key did not work with known Moonshot endpoints:\n${errors.map((e) => `  - ${e}`).join("\n")}`);
+}
+
+async function resolveDeepSeekAdapter(apiKey) {
+  return {
+    baseUrl: DEEPSEEK_ANTHROPIC_BASE,
+    apiOrigin: DEEPSEEK_API_ORIGIN,
+    modelSource: DEEPSEEK_MODELS_URL,
+    models: await fetchDeepSeekModels(apiKey)
+  };
 }
 
 function mergeSettings(target, generated) {
@@ -720,6 +844,24 @@ async function fetchKimiAPIBalance(origin, apiKey) {
   return parseKimiBalance(JSON.parse(text));
 }
 
+async function fetchDeepSeekModels(apiKey) {
+  const res = await fetch(DEEPSEEK_MODELS_URL, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`DeepSeek models request failed: HTTP ${res.status}: ${text}`);
+  return withDeepSeekClaudeVariants(parseDeepSeekModels(JSON.parse(text)));
+}
+
+async function fetchDeepSeekBalance(apiKey) {
+  const res = await fetch(DEEPSEEK_BALANCE_URL, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`balance request failed: HTTP ${res.status}: ${text}`);
+  return parseDeepSeekBalance(JSON.parse(text));
+}
+
 function parseKimiModels(body) {
   return (body.data || [])
     .filter((item) => item.id)
@@ -728,6 +870,29 @@ function parseKimiModels(body) {
       displayName: item.display_name || "",
       contextLength: item.context_length || 0
     }));
+}
+
+function parseDeepSeekModels(body) {
+  return (body.data || [])
+    .filter((item) => item.id)
+    .map((item) => ({
+      id: item.id,
+      displayName: item.id,
+      contextLength: 0
+    }));
+}
+
+function withDeepSeekClaudeVariants(models) {
+  const ids = new Set(models.map((model) => model.id));
+  const output = [...models];
+  if (ids.has("deepseek-v4-pro") && !ids.has("deepseek-v4-pro[1m]")) {
+    output.unshift({
+      id: "deepseek-v4-pro[1m]",
+      displayName: "deepseek-v4-pro for Claude Code 1M",
+      contextLength: 1000000
+    });
+  }
+  return output;
 }
 
 function parseKimiBalance(body) {
@@ -741,6 +906,21 @@ function parseKimiBalance(body) {
     voucher: number(data.voucher_balance),
     cash: number(data.cash_balance),
     currency: data.currency || body.currency || "RMB"
+  };
+}
+
+function parseDeepSeekBalance(body) {
+  const balances = body.balance_infos || [];
+  const preferred = balances.find((item) => item.currency === "CNY") || balances[0] || {};
+  return {
+    success: true,
+    provider: "deepseek",
+    queriedAt: new Date().toISOString(),
+    available: number(preferred.total_balance),
+    voucher: number(preferred.granted_balance),
+    cash: number(preferred.topped_up_balance),
+    currency: preferred.currency || "RMB",
+    isAvailable: body.is_available !== false
   };
 }
 
@@ -898,6 +1078,19 @@ function recommendMapping(models) {
   const sorted = [...models].sort((a, b) => modelScore(b) - modelScore(a));
   const main = sorted[0]?.id || "kimi-for-coding";
   return { main, opus: main, sonnet: main, haiku: main, subagent: main };
+}
+
+function recommendDeepSeekMapping(models) {
+  const ids = new Set(models.map((model) => model.id));
+  const pro = ids.has("deepseek-v4-pro[1m]") ? "deepseek-v4-pro[1m]" : ids.has("deepseek-v4-pro") ? "deepseek-v4-pro" : models[0]?.id || "deepseek-v4-pro[1m]";
+  const flash = ids.has("deepseek-v4-flash") ? "deepseek-v4-flash" : pro;
+  return {
+    main: pro,
+    opus: pro,
+    sonnet: pro,
+    haiku: flash,
+    subagent: flash
+  };
 }
 
 function modelScore(model) {
@@ -1069,6 +1262,7 @@ function printJSON(value) {
 function displayProvider(profile) {
   if (profile.provider === "kimi" && profile.mode === "coding-plan") return "Kimi Coding";
   if (profile.provider === "kimi" && profile.mode === "api") return "Kimi API";
+  if (profile.provider === "deepseek" && profile.mode === "api") return "DeepSeek API";
   return `${profile.provider} ${profile.mode}`;
 }
 
@@ -1463,7 +1657,10 @@ module.exports = {
   parseKimiModels,
   parseKimiQuota,
   parseKimiBalance,
+  parseDeepSeekModels,
+  parseDeepSeekBalance,
   recommendMapping,
+  recommendDeepSeekMapping,
   mergeSettings,
   settingsForProfile,
   listStatus,

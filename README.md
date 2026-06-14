@@ -4,7 +4,7 @@ MengMeng 是一个很小的命令行工具，用来管理 Claude Code 的 provid
 配置。
 
 它现在只专注一件事：在 macOS、Linux、SSH 服务器、WSL、远程开发机这些
-终端环境里，更省心地配置和切换 Kimi Coding Plan / Kimi API。
+终端环境里，更省心地配置和切换 Kimi Coding Plan、Kimi API 和 DeepSeek API。
 
 命令名是 `mm`。
 
@@ -35,14 +35,15 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 
 - `mm init` 首次初始化
 - `mm add kimi` 添加 Kimi profile，支持 Kimi Coding Plan 和 Kimi API
-- 请求 Kimi models API，并自动推荐 Claude Code 模型映射
+- `mm add deepseek` 添加 DeepSeek API profile
+- 请求 provider models API，并自动推荐 Claude Code 模型映射
 - 可选开启 Claude Code power-user permission 设置
 - `mm list` 查看 profile，显示 Coding Plan quota、API 余额、连通性状态和当前 active provider
 - `mm use` 切换当前 provider，写入前自动备份
 - `show` / `export` / `import` / `remove` / `rollback`
 - 常用命令支持 `--json`，方便脚本使用
 
-目前只支持 Kimi。GLM、DeepSeek、MiMo、自定义 relay 这些都还
+目前支持 Kimi 和 DeepSeek。GLM、MiMo、自定义 relay 这些都还
 没有实现，后面看实际需求再加。
 
 ## 安装
@@ -151,6 +152,18 @@ KIMI_API_KEY=sk-xxx mm add kimi --mode api --yes
 MOONSHOT_API_KEY=sk-xxx mm add kimi --mode api --key-env MOONSHOT_API_KEY --yes
 ```
 
+添加 DeepSeek：
+
+```sh
+mm add deepseek
+```
+
+非交互使用 DeepSeek API：
+
+```sh
+DEEPSEEK_API_KEY=sk-xxx mm add deepseek --yes
+```
+
 切换 Claude Code 到这个 profile：
 
 ```sh
@@ -177,6 +190,7 @@ mm doctor
 ```text
 mm init
 mm add kimi
+mm add deepseek
 mm list
 mm current
 mm show <profile>
@@ -204,6 +218,11 @@ mm add kimi --key-env <ENV_NAME>
 mm add kimi --key-stdin
 mm add kimi --power-user
 mm add kimi --yes
+mm add deepseek --name <profile>
+mm add deepseek --key-env <ENV_NAME>
+mm add deepseek --key-stdin
+mm add deepseek --power-user
+mm add deepseek --yes
 ```
 
 ## `mm use` 会写入什么
@@ -277,7 +296,7 @@ MENGMENG_CLAUDE_CONFIG=/path/to/settings.json
 - 更清楚的模型推荐解释
 - 更稳定的 quota 展示
 - custom relay profile
-- 如果确实有人需要，再加 GLM、DeepSeek、MiMo adapter
+- 如果确实有人需要，再加 GLM、MiMo adapter
 
 暂时不做：
 

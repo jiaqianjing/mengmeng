@@ -10,7 +10,10 @@ const {
   parseKimiModels,
   parseKimiQuota,
   parseKimiBalance,
+  parseDeepSeekModels,
+  parseDeepSeekBalance,
   recommendMapping,
+  recommendDeepSeekMapping,
   mergeSettings,
   settingsForProfile,
   listStatus,
@@ -97,6 +100,40 @@ test("parseKimiBalance extracts available voucher and cash balances", () => {
   assert.equal(balance.currency, "RMB");
 });
 
+test("parseDeepSeekModels normalizes model list", () => {
+  const models = parseDeepSeekModels({
+    data: [
+      { id: "deepseek-v4-flash", object: "model", owned_by: "deepseek" },
+      { id: "deepseek-v4-pro", object: "model", owned_by: "deepseek" }
+    ]
+  });
+
+  assert.deepEqual(models, [
+    { id: "deepseek-v4-flash", displayName: "deepseek-v4-flash", contextLength: 0 },
+    { id: "deepseek-v4-pro", displayName: "deepseek-v4-pro", contextLength: 0 }
+  ]);
+});
+
+test("parseDeepSeekBalance extracts CNY balances", () => {
+  const balance = parseDeepSeekBalance({
+    is_available: true,
+    balance_infos: [
+      {
+        currency: "CNY",
+        total_balance: "9.52",
+        granted_balance: "0.00",
+        topped_up_balance: "9.52"
+      }
+    ]
+  });
+
+  assert.equal(balance.success, true);
+  assert.equal(balance.available, 9.52);
+  assert.equal(balance.voucher, 0);
+  assert.equal(balance.cash, 9.52);
+  assert.equal(balance.currency, "CNY");
+});
+
 
 test("recommendMapping chooses the coding model", () => {
   const mapping = recommendMapping([
@@ -105,6 +142,20 @@ test("recommendMapping chooses the coding model", () => {
   ]);
   assert.equal(mapping.main, "kimi-for-coding");
   assert.equal(mapping.haiku, "kimi-for-coding");
+});
+
+test("recommendDeepSeekMapping follows Claude Code defaults", () => {
+  const mapping = recommendDeepSeekMapping([
+    { id: "deepseek-v4-pro[1m]", displayName: "DeepSeek V4 Pro 1M" },
+    { id: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro" },
+    { id: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash" }
+  ]);
+
+  assert.equal(mapping.main, "deepseek-v4-pro[1m]");
+  assert.equal(mapping.opus, "deepseek-v4-pro[1m]");
+  assert.equal(mapping.sonnet, "deepseek-v4-pro[1m]");
+  assert.equal(mapping.haiku, "deepseek-v4-flash");
+  assert.equal(mapping.subagent, "deepseek-v4-flash");
 });
 
 test("mergeSettings preserves unrelated settings", () => {
@@ -127,6 +178,7 @@ test("detectStorageCandidates always includes local and custom choices", () => {
 
 test("provider names support aliases and friendly suggestions", () => {
   assert.equal(normalizeProvider("moonshot"), "kimi");
+  assert.equal(normalizeProvider("ds"), "deepseek");
   const message = formatUnsupportedProvider("kim");
   assert.match(message, /Did you mean: mm add kimi/);
   assert.match(message, /Supported providers:/);
@@ -153,6 +205,30 @@ test("settingsForProfile supports Kimi API mode", () => {
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://api.moonshot.ai/anthropic");
   assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "sk-api-test");
   assert.equal(settings.env.ANTHROPIC_MODEL, "kimi-k2.6");
+});
+
+test("settingsForProfile supports DeepSeek API mode", () => {
+  const settings = settingsForProfile({
+    baseUrl: "https://api.deepseek.com/anthropic",
+    apiKey: "sk-deepseek-test",
+    model: {
+      main: "deepseek-v4-pro[1m]",
+      opus: "deepseek-v4-pro[1m]",
+      sonnet: "deepseek-v4-pro[1m]",
+      haiku: "deepseek-v4-flash",
+      subagent: "deepseek-v4-flash"
+    },
+    env: {
+      ENABLE_TOOL_SEARCH: "false",
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: "262144"
+    },
+    powerUser: false
+  }, { redact: false });
+
+  assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://api.deepseek.com/anthropic");
+  assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "sk-deepseek-test");
+  assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-v4-pro[1m]");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "deepseek-v4-flash");
 });
 
 test("listStatus explains API profiles without quota endpoint", () => {
