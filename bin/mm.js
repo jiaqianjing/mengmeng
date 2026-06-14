@@ -96,20 +96,20 @@ async function main() {
 
 function printHelp(opts = {}) {
   const color = makeColor({ ...opts, stream: process.stdout });
-  console.log(`MengMeng (萌萌) - tiny Claude Code provider assistant
+  console.log(`${color.bold("MengMeng (萌萌)")} ${color.gray("- tiny Claude Code provider assistant")}
 
-Usage:
-  mm init
-  mm add <provider>
-  mm list
-  mm current
-  mm show <profile>
-  mm use <profile>
-  mm doctor
-  mm remove <profile>
-  mm rollback [backup-id]
-  mm export [--redact]
-  mm import <file>
+${color.cyan("Usage:")}
+  ${color.gray("mm init")}
+  ${color.gray("mm add <provider>")}
+  ${color.gray("mm list")}
+  ${color.gray("mm current")}
+  ${color.gray("mm show <profile>")}
+  ${color.gray("mm use <profile>")}
+  ${color.gray("mm doctor")}
+  ${color.gray("mm remove <profile>")}
+  ${color.gray("mm rollback [backup-id]")}
+  ${color.gray("mm export [--redact]")}
+  ${color.gray("mm import <file>")}
 
 ${formatSupportedProviders(color)}`);
 }
@@ -208,12 +208,13 @@ async function initCommand(args, opts) {
 
   if (existing?.initialized) {
     if (opts.json) return printJSON(existing);
+    const color = makeColor(opts);
     if (!flags.yes && isInteractive()) {
       return reconfigureInit(existing, configDir);
     }
-    console.log("MengMeng is already initialized.");
-    console.log(`Profiles: ${existing.configDir}`);
-    console.log(`Claude:   ${existing.claudeConfigPath}`);
+    console.log(color.green("MengMeng is already initialized."));
+    console.log(`${color.gray("Profiles:")} ${existing.configDir}`);
+    console.log(`${color.gray("Claude:  ")} ${existing.claudeConfigPath}`);
     return;
   }
 
@@ -222,7 +223,8 @@ async function initCommand(args, opts) {
   if (flags["config-dir"]) chosenConfigDir = expandHome(flags["config-dir"]);
   if (flags["claude-config"]) claudeConfigPath = expandHome(flags["claude-config"]);
   if (!flags.yes && isInteractive()) {
-    console.log("MengMeng first-run setup");
+    const color = makeColor({ ...opts, stream: process.stderr });
+    console.log(color.bold("MengMeng first-run setup"));
     const detected = detectStorageCandidates(configDir);
     const selected = await selectOption("Where should MengMeng store profiles?", detected, 0);
     if (selected.value === "custom") {
@@ -250,12 +252,14 @@ async function initCommand(args, opts) {
   ensureStore(chosenConfigDir);
 
   if (opts.json) return printJSON(config);
-  console.log("MengMeng initialized.");
-  console.log(`Profiles: ${chosenConfigDir}`);
-  console.log(`Claude:   ${claudeConfigPath}`);
+  const color = makeColor(opts);
+  console.log(color.green("MengMeng initialized."));
+  console.log(`${color.gray("Profiles:")} ${chosenConfigDir}`);
+  console.log(`${color.gray("Claude:  ")} ${claudeConfigPath}`);
 }
 
 async function reconfigureInit(existing, defaultConfigDir) {
+  const color = makeColor({ stream: process.stdout });
   const selected = await selectOption("MengMeng is already initialized. What would you like to change?", [
     {
       label: "View current config",
@@ -285,9 +289,9 @@ async function reconfigureInit(existing, defaultConfigDir) {
   }
 
   if (selected.value === "view") {
-    console.log("MengMeng config:");
-    console.log(`Profiles: ${existing.configDir}`);
-    console.log(`Claude:   ${existing.claudeConfigPath}`);
+    console.log(color.bold("MengMeng config:"));
+    console.log(`${color.gray("Profiles:")} ${existing.configDir}`);
+    console.log(`${color.gray("Claude:  ")} ${existing.claudeConfigPath}`);
     return;
   }
 
@@ -322,9 +326,9 @@ async function reconfigureInit(existing, defaultConfigDir) {
   }
 
   writeConfig(updated);
-  console.log("MengMeng config updated.");
-  console.log(`Profiles: ${updated.configDir}`);
-  console.log(`Claude:   ${updated.claudeConfigPath}`);
+  console.log(color.green("MengMeng config updated."));
+  console.log(`${color.gray("Profiles:")} ${updated.configDir}`);
+  console.log(`${color.gray("Claude:  ")} ${updated.claudeConfigPath}`);
 }
 
 async function ensureInitialized(command, args, opts) {
@@ -456,7 +460,8 @@ async function addKimiCommand(flags, opts) {
   writeStore(config.configDir, store);
 
   if (opts.json) return printJSON(redactProfile(profile));
-  console.log(`Saved provider: ${profileName}`);
+  const color = makeColor(opts);
+  console.log(`${color.green("Saved provider:")} ${color.cyan(profileName)}`);
   if (quotaCache?.success) console.log(formatQuota(quotaCache, opts));
   if (balanceCache?.success) console.log(formatBalance(balanceCache, opts));
   console.log(formatProfileStatus(profile, opts));
@@ -536,7 +541,8 @@ async function addDeepSeekCommand(flags, opts) {
   writeStore(config.configDir, store);
 
   if (opts.json) return printJSON(redactProfile(profile));
-  console.log(`Saved provider: ${profileName}`);
+  const color = makeColor(opts);
+  console.log(`${color.green("Saved provider:")} ${color.cyan(profileName)}`);
   if (balanceCache?.success) console.log(formatBalance(balanceCache, opts));
   console.log(formatProfileStatus(profile, opts));
   if (isInteractive() && !flags.yes) {
@@ -599,14 +605,28 @@ async function listCommand(args, opts) {
     return;
   }
   const color = makeColor(opts);
-  console.log(`${pad("", 4)} ${pad("PROFILE", 16)} ${pad("PROVIDER", 16)} ${pad("MODEL", 18)} ${pad("LIMIT", 28)} STATUS`);
+  console.log([
+    pad("", 4),
+    pad(color.gray("PROFILE"), 18),
+    pad(color.gray("PROVIDER"), 18),
+    pad(color.gray("MODEL"), 20),
+    pad(color.gray("LIMIT"), 30),
+    color.gray("STATUS")
+  ].join(" "));
   for (const profile of store.profiles) {
     const isActive = profile.name === config.current;
     const active = activeMarker(isActive, color);
     const name = profile.name;
     const provider = isActive ? color.bold(displayProvider(profile)) : displayProvider(profile);
     const { limit, status } = listStatus(profile, color);
-    console.log(`${pad(active, 4)} ${pad(name, 16)} ${pad(provider, 16)} ${pad(truncate(profile.model.main, 18), 18)} ${pad(truncate(limit, 28), 28)} ${status}`);
+    console.log([
+      pad(active, 4),
+      pad(name, 18),
+      pad(provider, 18),
+      pad(color.gray(truncate(profile.model.main, 20)), 20),
+      pad(truncate(limit, 30), 30),
+      status
+    ].join(" "));
   }
 }
 
@@ -621,12 +641,13 @@ function showCommand(args, opts) {
   if (!name) throw new Error("usage: mm show <profile>");
   const profile = loadProfile(name);
   if (opts.json) return printJSON(redactProfile(profile));
-  console.log(`Profile:  ${profile.name}`);
-  console.log(`Provider: ${displayProvider(profile)}`);
-  console.log(`Base URL: ${profile.baseUrl}`);
-  console.log(`API key:  ${maskSecret(profile.apiKey)}\n`);
-  console.log("Claude Code mapping:");
-  printMapping(profile.model);
+  const color = makeColor(opts);
+  console.log(`${color.gray("Profile: ")} ${color.cyan(profile.name)}`);
+  console.log(`${color.gray("Provider:")} ${displayProvider(profile)}`);
+  console.log(`${color.gray("Base URL:")} ${profile.baseUrl}`);
+  console.log(`${color.gray("API key: ")} ${maskSecret(profile.apiKey)}\n`);
+  console.log(color.green("Claude Code mapping:"));
+  printMapping(profile.model, color);
   if (profile.statusCache || profile.balanceCache) console.log(`\n${formatProfileStatus(profile, opts)}`);
   if (profile.balanceCache) console.log(`\n${formatBalance(profile.balanceCache, opts)}`);
   if (profile.quotaCache) console.log(`\n${formatQuota(profile.quotaCache, opts)}`);
@@ -637,7 +658,8 @@ async function useCommand(args, opts) {
   if (!name) throw new Error("usage: mm use <profile>");
   await useProfile(name);
   if (opts.json) return printJSON({ success: true, current: name });
-  console.log(`Current provider: ${name}`);
+  const color = makeColor(opts);
+  console.log(`${color.green("Current provider:")} ${color.cyan(name)}`);
 }
 
 function doctorCommand(opts) {
@@ -650,8 +672,10 @@ function doctorCommand(opts) {
     ["current profile", Boolean(config.current), config.current || "none"]
   ];
   if (opts.json) return printJSON(checks.map(([name, ok, detail]) => ({ name, ok, detail })));
+  const color = makeColor(opts);
   for (const [name, ok, detail] of checks) {
-    console.log(`${ok ? "✓" : "!"} ${pad(name, 18)} ${detail}`);
+    const mark = ok ? color.green("✓") : color.yellow("!");
+    console.log(`${mark} ${pad(color.gray(name), 18)} ${detail}`);
   }
 }
 
@@ -677,7 +701,8 @@ async function removeCommand(args, opts) {
     writeConfig(config);
   }
   if (opts.json) return printJSON({ success: true, removed: name });
-  console.log(`Removed profile: ${name}`);
+  const color = makeColor(opts);
+  console.log(`${color.green("Removed profile:")} ${color.cyan(name)}`);
 }
 
 function rollbackCommand(args, opts) {
@@ -1414,12 +1439,10 @@ function extractErrorMessageFromText(text) {
   return "";
 }
 
-function printMapping(mapping) {
-  console.log(`  main:     ${mapping.main}`);
-  console.log(`  opus:     ${mapping.opus}`);
-  console.log(`  sonnet:   ${mapping.sonnet}`);
-  console.log(`  haiku:    ${mapping.haiku}`);
-  console.log(`  subagent: ${mapping.subagent}`);
+function printMapping(mapping, color = makeColor({ noColor: true })) {
+  for (const slot of ["main", "opus", "sonnet", "haiku", "subagent"]) {
+    console.log(`  ${color.gray(`${slot}:`.padEnd(10))}${color.cyan(mapping[slot])}`);
+  }
 }
 
 function redactProfile(profile) {
@@ -1548,14 +1571,17 @@ async function selectOption(message, options, defaultIndex = 0) {
 
     const render = () => {
       if (renderedLines > 0) output.write(`\u001b[${renderedLines}A`);
-      const lines = [message];
+      const width = Math.max(60, output.columns || 80);
+      const lines = [colorText(message, "92;1")];
       for (let i = 0; i < options.length; i++) {
         const option = options[i];
         const selected = i === index;
-        const prefix = selected ? colorText("›", "36") : " ";
-        const label = selected ? colorText(option.label, "36;1") : option.label;
-        const description = option.description ? colorText(` ${option.description}`, selected ? "90" : "90") : "";
-        lines.push(` ${prefix} ${label}${description}`);
+        if (selected) {
+          lines.push(selectedOptionLine(option, width - 1));
+          continue;
+        }
+        const description = option.description ? colorText(` ${option.description}`, "90") : "";
+        lines.push(`    ${colorText(option.label, "37")}${description}`);
       }
       lines.push(colorText("Use ↑/↓, j/k, or number keys. Press Enter to confirm.", "90"));
       for (const line of lines) output.write(`\u001b[2K\r${line}\n`);
@@ -1565,7 +1591,7 @@ async function selectOption(message, options, defaultIndex = 0) {
     const finish = () => {
       cleanup();
       if (renderedLines > 0) output.write(`\u001b[${renderedLines}A`);
-      output.write(`\u001b[2K\r${message} ${colorText(options[index].label, "36;1")}\n`);
+      output.write(`\u001b[2K\r${colorText(message, "92;1")} ${colorText(options[index].label, "36;1")}\n`);
       for (let i = 1; i < renderedLines; i++) output.write("\u001b[2K\r\n");
       if (renderedLines > 1) output.write(`\u001b[${renderedLines - 1}A`);
       resolve(options[index]);
@@ -1600,6 +1626,15 @@ function colorText(text, code) {
   return `\u001b[${code}m${text}\u001b[0m`;
 }
 
+function selectedOptionLine(option, width) {
+  const bg = "\u001b[48;5;17m";
+  const reset = "\u001b[0m";
+  const withBg = (code, text) => `${bg}\u001b[${code}m${text}${reset}${bg}`;
+  const description = option.description ? withBg("90", ` ${option.description}`) : "";
+  const line = `${bg}  ${withBg("36;1", "✦")} ${withBg("36;1", option.label)}${description}`;
+  return `${line}${" ".repeat(Math.max(0, width - stripAnsi(line).length))}${reset}`;
+}
+
 function makeColor(opts = {}) {
   const stream = opts.stream || process.stdout;
   const enabled = !opts.noColor && stream.isTTY;
@@ -1611,7 +1646,8 @@ function makeColor(opts = {}) {
     cyan: (text) => wrap(36, text),
     yellow: (text) => wrap(33, text),
     red: (text) => wrap(31, text),
-    gray: (text) => wrap(90, text)
+    gray: (text) => wrap(90, text),
+    blue: (text) => wrap(94, text)
   };
 }
 
