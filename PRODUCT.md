@@ -317,9 +317,9 @@ trap users into its own store.
 state a Claude Code user cares about before switching:
 
 ```text
-* kimi        Kimi Coding Plan   kimi-k2.7-code   5h 42%  week 18%   ok
+✹ kimi        Kimi Coding Plan   kimi-k2.7-code   5h 42%  week 18%   ok
   glm-work    GLM Coding Plan    glm-5.1-coding   5h 76%  week 51%   warn
-  deepseek    DeepSeek API       deepseek-chat     balance $3.21     ok
+  deepseek    DeepSeek API       deepseek-chat     balance ¥3.21 RMB  ok
   official    Claude Official    claude-sonnet     local             fallback
 ```
 
@@ -352,23 +352,19 @@ Display rules:
 - Green: healthy.
 - Yellow: nearing limit.
 - Red: exhausted, invalid, or key rejected.
-- Dim/gray: not supported, not checked, or stale cache.
+- Dim/gray: not supported or not exposed by the provider API.
 
 Terminal color should be enabled when stdout is a TTY and disabled for pipes.
 Support `--no-color` and `--json`.
 
-`mm list` may use a short cache to stay fast. Users can force fresh network
-checks with:
-
-```sh
-mm list --refresh
-```
-
-If a provider has no stable quota API, show `unknown` or `not supported` instead
-of pretending. The adapter should include a console URL when useful.
+`mm list` should synchronize the latest quota, API balance, and connectivity
+status by default. For API providers, prefer account balance over vague limit
+copy when a balance endpoint exists. If neither quota nor balance is exposed,
+show `usage not exposed` instead of pretending. The adapter should include a
+console URL when useful.
 
 Avoid adding standalone quota commands in the MVP. Detailed quota information can
-live in `mm show <profile>` and refreshed list output until there is clear demand
+live in `mm show <profile>` and list output until there is clear demand
 for a separate verb.
 
 ## Minimal Command Surface

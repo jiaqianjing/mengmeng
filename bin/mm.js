@@ -10,7 +10,9 @@ const KIMI_CODING_BASE = "https://api.kimi.com/coding";
 const KIMI_MODELS_URL = "https://api.kimi.com/coding/v1/models";
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 const KIMI_API_ORIGINS = ["https://api.moonshot.ai", "https://api.moonshot.cn"];
-const QUOTA_CACHE_MS = 5 * 60 * 1000;
+const PROBE_PROMPT = "这是一个接口测试，请返回 \"ok\" 即可。";
+const PROBE_MAX_TOKENS = 8;
+const PROBE_TIMEOUT_MS = 20000;
 const SUPPORTED_PROVIDERS = [
   {
     id: "kimi",
@@ -90,7 +92,7 @@ function printHelp(opts = {}) {
 Usage:
   mm init
   mm add <provider>
-  mm list [--refresh]
+  mm list
   mm current
   mm show <profile>
   mm use <profile>
@@ -388,14 +390,22 @@ async function addCommand(args, opts) {
   }
 
   let quotaCache = null;
+  let balanceCache = null;
   if (mode === "coding-plan") {
     try {
       quotaCache = await fetchKimiQuota(apiKey);
     } catch {
       quotaCache = null;
     }
+  } else if (mode === "api") {
+    try {
+      balanceCache = await fetchKimiAPIBalance(adapter.apiOrigin, apiKey);
+    } catch {
+      balanceCache = null;
+    }
   }
 
+  console.error("Checking Claude Code request path...");
   const config = requireConfig();
   const store = readStore(config.configDir);
   const now = new Date().toISOString();
@@ -420,16 +430,22 @@ async function addCommand(args, opts) {
     },
     powerUser,
     quotaCache,
+    balanceCache,
+    statusCache: null,
+    apiOrigin: adapter.apiOrigin || "",
     modelSource: adapter.modelSource,
     createdAt: existing?.createdAt || now,
     updatedAt: now
   };
+  profile.statusCache = await probeProfileStatus(profile);
   upsertProfile(store, profile);
   writeStore(config.configDir, store);
 
   if (opts.json) return printJSON(redactProfile(profile));
   console.log(`Saved provider: ${profileName}`);
   if (quotaCache?.success) console.log(formatQuota(quotaCache, opts));
+  if (balanceCache?.success) console.log(formatBalance(balanceCache, opts));
+  console.log(formatProfileStatus(profile, opts));
   if (isInteractive() && !flags.yes) {
     const useNow = await ask(`Use ${profileName} now? [Y/n] `);
     if (confirmDefaultYes(useNow)) await useProfile(profileName);
@@ -437,20 +453,38 @@ async function addCommand(args, opts) {
 }
 
 async function listCommand(args, opts) {
-  const { flags } = parseFlags(args);
+  if (args.length) throw new Error("usage: mm list");
   const config = requireConfig();
   const store = readStore(config.configDir);
   let changed = false;
   for (const profile of store.profiles) {
-    if (profile.provider === "kimi" && profile.mode === "coding-plan" && shouldRefreshQuota(profile.quotaCache, flags.refresh)) {
+    if (profile.provider === "kimi" && profile.mode === "coding-plan") {
       try {
         profile.quotaCache = await fetchKimiQuota(profile.apiKey);
-        profile.updatedAt = new Date().toISOString();
-        changed = true;
-      } catch {
-        // Keep list fast and forgiving.
+      } catch (error) {
+        profile.quotaCache = {
+          success: false,
+          provider: profile.provider,
+          queriedAt: new Date().toISOString(),
+          error: error.message
+        };
       }
     }
+    if (profile.provider === "kimi" && profile.mode === "api") {
+      try {
+        profile.balanceCache = await fetchKimiAPIBalance(kimiAPIOriginForProfile(profile), profile.apiKey);
+      } catch (error) {
+        profile.balanceCache = {
+          success: false,
+          provider: profile.provider,
+          queriedAt: new Date().toISOString(),
+          error: error.message
+        };
+      }
+    }
+    profile.statusCache = await probeProfileStatus(profile);
+    profile.updatedAt = new Date().toISOString();
+    changed = true;
   }
   if (changed) writeStore(config.configDir, store);
 
@@ -460,11 +494,14 @@ async function listCommand(args, opts) {
     return;
   }
   const color = makeColor(opts);
-  console.log(`${pad("", 2)} ${pad("PROFILE", 16)} ${pad("PROVIDER", 16)} ${pad("MODEL", 18)} ${pad("LIMIT", 28)} STATUS`);
+  console.log(`${pad("", 4)} ${pad("PROFILE", 16)} ${pad("PROVIDER", 16)} ${pad("MODEL", 18)} ${pad("LIMIT", 28)} STATUS`);
   for (const profile of store.profiles) {
-    const active = profile.name === config.current ? "*" : " ";
+    const isActive = profile.name === config.current;
+    const active = activeMarker(isActive, color);
+    const name = profile.name;
+    const provider = isActive ? color.bold(displayProvider(profile)) : displayProvider(profile);
     const { limit, status } = listStatus(profile, color);
-    console.log(`${pad(active, 2)} ${pad(profile.name, 16)} ${pad(displayProvider(profile), 16)} ${pad(truncate(profile.model.main, 18), 18)} ${pad(truncate(limit, 28), 28)} ${status}`);
+    console.log(`${pad(active, 4)} ${pad(name, 16)} ${pad(provider, 16)} ${pad(truncate(profile.model.main, 18), 18)} ${pad(truncate(limit, 28), 28)} ${status}`);
   }
 }
 
@@ -485,6 +522,8 @@ function showCommand(args, opts) {
   console.log(`API key:  ${maskSecret(profile.apiKey)}\n`);
   console.log("Claude Code mapping:");
   printMapping(profile.model);
+  if (profile.statusCache || profile.balanceCache) console.log(`\n${formatProfileStatus(profile, opts)}`);
+  if (profile.balanceCache) console.log(`\n${formatBalance(profile.balanceCache, opts)}`);
   if (profile.quotaCache) console.log(`\n${formatQuota(profile.quotaCache, opts)}`);
 }
 
@@ -622,6 +661,7 @@ async function resolveKimiAdapter(mode, apiKey) {
   if (mode === "coding-plan") {
     return {
       baseUrl: KIMI_CODING_BASE,
+      apiOrigin: "",
       modelSource: "kimi-coding-models-api",
       models: await fetchKimiCodingModels(apiKey)
     };
@@ -632,6 +672,7 @@ async function resolveKimiAdapter(mode, apiKey) {
     try {
       return {
         baseUrl: `${origin}/anthropic`,
+        apiOrigin: origin,
         modelSource: `${origin}/v1/models`,
         models: await fetchKimiAPIModels(apiKey, origin)
       };
@@ -669,6 +710,16 @@ async function fetchKimiAPIModels(apiKey, origin) {
   return models;
 }
 
+async function fetchKimiAPIBalance(origin, apiKey) {
+  const url = `${origin}/v1/users/me/balance`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`balance request failed: HTTP ${res.status}: ${text}`);
+  return parseKimiBalance(JSON.parse(text));
+}
+
 function parseKimiModels(body) {
   return (body.data || [])
     .filter((item) => item.id)
@@ -677,6 +728,20 @@ function parseKimiModels(body) {
       displayName: item.display_name || "",
       contextLength: item.context_length || 0
     }));
+}
+
+function parseKimiBalance(body) {
+  const data = body.data || {};
+  if (body.status === false) throw new Error(`balance request failed: ${body.scode || body.code || "unknown"}`);
+  return {
+    success: true,
+    provider: "kimi",
+    queriedAt: new Date().toISOString(),
+    available: number(data.available_balance),
+    voucher: number(data.voucher_balance),
+    cash: number(data.cash_balance),
+    currency: data.currency || body.currency || "RMB"
+  };
 }
 
 async function fetchKimiQuota(apiKey) {
@@ -693,6 +758,110 @@ async function fetchKimiQuota(apiKey) {
     };
   }
   return parseKimiQuota(JSON.parse(text));
+}
+
+async function probeProfileStatus(profile) {
+  const checkedAt = new Date().toISOString();
+  const endpoint = `${String(profile.baseUrl || "").replace(/\/+$/, "")}/v1/messages`;
+  const started = Date.now();
+  try {
+    await fetchClaudeProbe(endpoint, profile, "bearer");
+    return successfulProbe(checkedAt, endpoint, profile, started);
+  } catch (firstError) {
+    if (requiresEnabledThinking(firstError)) {
+      try {
+        await fetchClaudeProbe(endpoint, profile, "bearer", { thinking: "enabled" });
+        profile.probeThinking = "enabled";
+        return successfulProbe(checkedAt, endpoint, profile, started);
+      } catch (thinkingError) {
+        return failedProbe(checkedAt, endpoint, profile, thinkingError, started);
+      }
+    }
+    if (!/HTTP (401|403)\b/.test(firstError.message || "")) {
+      return failedProbe(checkedAt, endpoint, profile, firstError, started);
+    }
+    try {
+      await fetchClaudeProbe(endpoint, profile, "x-api-key");
+      return successfulProbe(checkedAt, endpoint, profile, started);
+    } catch (secondError) {
+      if (requiresEnabledThinking(secondError)) {
+        try {
+          await fetchClaudeProbe(endpoint, profile, "x-api-key", { thinking: "enabled" });
+          profile.probeThinking = "enabled";
+          return successfulProbe(checkedAt, endpoint, profile, started);
+        } catch (thinkingError) {
+          return failedProbe(checkedAt, endpoint, profile, thinkingError, started);
+        }
+      }
+      return failedProbe(checkedAt, endpoint, profile, secondError, started);
+    }
+  }
+}
+
+function successfulProbe(checkedAt, endpoint, profile, started) {
+  return {
+    success: true,
+    checkedAt,
+    endpoint,
+    model: profile.model.main,
+    latencyMs: Date.now() - started
+  };
+}
+
+function failedProbe(checkedAt, endpoint, profile, error, started) {
+  return {
+    success: false,
+    checkedAt,
+    endpoint,
+    model: profile.model.main,
+    latencyMs: Date.now() - started,
+    error: summarizeError(error.message || String(error), 180)
+  };
+}
+
+async function fetchClaudeProbe(endpoint, profile, authMode, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  const headers = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "anthropic-version": "2023-06-01"
+  };
+  if (authMode === "x-api-key") headers["x-api-key"] = profile.apiKey;
+  else headers.Authorization = `Bearer ${profile.apiKey}`;
+
+  try {
+    const body = {
+      model: profile.model.main,
+      max_tokens: PROBE_MAX_TOKENS,
+      messages: [
+        {
+          role: "user",
+          content: PROBE_PROMPT
+        }
+      ]
+    };
+    if (options.thinking === "enabled" || profile.probeThinking === "enabled") {
+      body.thinking = { type: "enabled" };
+    }
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(body)
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
+  } catch (error) {
+    if (error.name === "AbortError") throw new Error(`request timed out after ${PROBE_TIMEOUT_MS / 1000}s`);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function requiresEnabledThinking(error) {
+  return /invalid thinking: only type=enabled/i.test(error.message || String(error));
 }
 
 function parseKimiQuota(body) {
@@ -903,15 +1072,51 @@ function displayProvider(profile) {
   return `${profile.provider} ${profile.mode}`;
 }
 
+function kimiAPIOriginForProfile(profile) {
+  if (profile.apiOrigin) return profile.apiOrigin;
+  return String(profile.baseUrl || "").replace(/\/anthropic\/?$/, "").replace(/\/+$/, "");
+}
+
+function activeMarker(isActive, color) {
+  return isActive ? color.active("✹") : "";
+}
+
 function listStatus(profile, color) {
   const quota = profile.quotaCache;
-  if (!quota) return { limit: color.gray("unknown"), status: color.gray("unknown") };
-  if (!quota.success) return { limit: color.red("quota error"), status: color.red("error") };
-  const max = Math.max(0, ...quota.tiers.map((tier) => tier.usedPct || 0));
-  const text = quota.tiers.map((tier) => `${tier.name} ${Math.round(tier.usedPct)}%`).join("  ");
-  if (max >= 95) return { limit: color.red(text), status: color.red("exhausted") };
-  if (max >= 75) return { limit: color.yellow(text), status: color.yellow("warn") };
-  return { limit: color.green(text), status: color.green("ok") };
+  const balance = profile.balanceCache;
+  let limit;
+  let quotaStatus = null;
+  if (profile.mode === "api") {
+    if (!balance) {
+      limit = color.gray("balance not checked");
+    } else if (!balance.success) {
+      limit = color.red("balance error");
+    } else {
+      limit = color.green(formatBalanceLimit(balance));
+    }
+  } else if (!quota) {
+    limit = color.gray("no quota data");
+  } else if (!quota.success) {
+    limit = color.red("quota error");
+    quotaStatus = color.red("quota error");
+  } else {
+    const max = Math.max(0, ...quota.tiers.map((tier) => tier.usedPct || 0));
+    const text = quota.tiers.map((tier) => `${tier.name} ${Math.round(tier.usedPct)}%`).join("  ");
+    if (max >= 95) {
+      limit = color.red(text);
+      quotaStatus = color.red("exhausted");
+    } else if (max >= 75) {
+      limit = color.yellow(text);
+      quotaStatus = color.yellow("warn");
+    } else {
+      limit = color.green(text);
+      quotaStatus = color.green("ok");
+    }
+  }
+  return {
+    limit,
+    status: compactProfileStatus(profile, color) || quotaStatus || color.gray("not checked")
+  };
 }
 
 function formatQuota(quota, opts) {
@@ -928,17 +1133,99 @@ function formatQuotaTier(tier, color) {
   return `${color.cyan(tier.name)} ${paint(pctText)} used${reset}`;
 }
 
+function formatBalance(balance, opts) {
+  const color = makeColor(opts);
+  if (!balance.success) return `Balance: ${color.red(balance.error || "error")}`;
+  return [
+    `Balance: ${color.green(formatCurrency(balance.available, balance.currency))} available`,
+    color.gray(`voucher ${formatCurrency(balance.voucher, balance.currency)}; cash ${formatCurrency(balance.cash, balance.currency)}`)
+  ].join("; ");
+}
+
+function formatBalanceLimit(balance) {
+  return `balance ${formatCurrency(balance.available, balance.currency)}`;
+}
+
+function formatCurrency(value, currency = "RMB") {
+  const code = currency || "RMB";
+  const symbol = code === "RMB" || code === "CNY" ? "¥" : "";
+  return `${symbol}${formatMoney(value)} ${code}`;
+}
+
+function formatMoney(value) {
+  return Number(value || 0).toFixed(2);
+}
+
+function compactProfileStatus(profile, color) {
+  if (profile.statusCache?.success) return color.green("ok");
+  if (profile.statusCache) return color.red(summarizeError(profile.statusCache.error || "request failed", 48));
+  return "";
+}
+
+function formatProbeStatus(statusCache, opts) {
+  const color = makeColor(opts);
+  if (!statusCache) return `Status: ${color.gray("not checked")}`;
+  if (statusCache.success) {
+    const latency = typeof statusCache.latencyMs === "number" ? color.gray(` ${statusCache.latencyMs}ms`) : "";
+    return `Status: ${color.green("ok")}${latency}`;
+  }
+  return `Status: ${color.red(summarizeError(statusCache.error || "request failed", 120))}`;
+}
+
+function formatProfileStatus(profile, opts) {
+  const color = makeColor(opts);
+  if (profile.statusCache?.success) {
+    const latency = typeof profile.statusCache.latencyMs === "number" ? color.gray(` ${profile.statusCache.latencyMs}ms`) : "";
+    return `Status: ${color.green("ok")}${latency}`;
+  }
+  return formatProbeStatus(profile.statusCache, opts);
+}
+
+function summarizeError(value, max = 80) {
+  const text = String(value || "request failed").replace(/\s+/g, " ").trim();
+  const http = text.match(/^HTTP\s+\d+/i)?.[0] || "";
+  const jsonStart = text.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const body = JSON.parse(text.slice(jsonStart));
+      const extracted = extractErrorMessage(body);
+      if (extracted) return truncatePlain(http ? `${http}: ${extracted}` : extracted, max);
+    } catch {
+      const extracted = extractErrorMessageFromText(text.slice(jsonStart));
+      if (extracted) return truncatePlain(http ? `${http}: ${extracted}` : extracted, max);
+    }
+  }
+  return truncatePlain(text, max);
+}
+
+function extractErrorMessage(body) {
+  if (!body || typeof body !== "object") return "";
+  if (typeof body.message === "string") return body.message;
+  if (typeof body.error === "string") return body.error;
+  if (body.error && typeof body.error === "object") {
+    if (typeof body.error.message === "string") return body.error.message;
+    if (typeof body.error.type === "string") return body.error.type;
+    if (typeof body.error.code === "string") return body.error.code;
+  }
+  if (typeof body.code === "string" || typeof body.code === "number") return `code ${body.code}`;
+  if (typeof body.scode === "string") return body.scode;
+  return "";
+}
+
+function extractErrorMessageFromText(text) {
+  for (const key of ["message", "type", "code", "scode"]) {
+    const match = text.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)`));
+    if (match) return match[1];
+  }
+  return "";
+}
+
 function printMapping(mapping) {
   console.log(`  main:     ${mapping.main}`);
   console.log(`  opus:     ${mapping.opus}`);
   console.log(`  sonnet:   ${mapping.sonnet}`);
   console.log(`  haiku:    ${mapping.haiku}`);
   console.log(`  subagent: ${mapping.subagent}`);
-}
-
-function shouldRefreshQuota(cache, force) {
-  if (force || !cache?.queriedAt) return true;
-  return Date.now() - Date.parse(cache.queriedAt) > QUOTA_CACHE_MS;
 }
 
 function redactProfile(profile) {
@@ -952,12 +1239,24 @@ function maskSecret(value = "") {
 
 function truncate(value, max) {
   value = String(value || "");
+  const plain = stripAnsi(value);
+  if (plain.length <= max) return value;
+  return `${plain.slice(0, max - 1)}…`;
+}
+
+function truncatePlain(value, max) {
+  value = stripAnsi(value);
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
 }
 
 function pad(value, length) {
   value = String(value || "");
-  return value.length >= length ? value : value + " ".repeat(length - value.length);
+  const visibleLength = stripAnsi(value).length;
+  return visibleLength >= length ? value : value + " ".repeat(length - visibleLength);
+}
+
+function stripAnsi(value) {
+  return String(value || "").replace(/\u001b\[[0-9;]*m/g, "");
 }
 
 function pct(used, limit) {
@@ -1113,6 +1412,7 @@ function makeColor(opts = {}) {
   const wrap = (code, text) => (enabled ? `\u001b[${code}m${text}\u001b[0m` : text);
   return {
     bold: (text) => wrap(1, text),
+    active: (text) => wrap("5;36;1", text),
     green: (text) => wrap(32, text),
     cyan: (text) => wrap(36, text),
     yellow: (text) => wrap(33, text),
@@ -1162,9 +1462,13 @@ function loadDotEnv(file) {
 module.exports = {
   parseKimiModels,
   parseKimiQuota,
+  parseKimiBalance,
   recommendMapping,
   mergeSettings,
   settingsForProfile,
+  listStatus,
+  formatProbeStatus,
+  formatProfileStatus,
   detectStorageCandidates,
   normalizeProvider,
   formatUnsupportedProvider

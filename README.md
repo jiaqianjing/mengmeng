@@ -37,7 +37,7 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - `mm add kimi` 添加 Kimi profile，支持 Kimi Coding Plan 和 Kimi API
 - 请求 Kimi models API，并自动推荐 Claude Code 模型映射
 - 可选开启 Claude Code power-user permission 设置
-- `mm list` 查看 profile，并显示缓存的 Kimi Coding Plan quota 状态
+- `mm list` 查看 profile，显示 Coding Plan quota、API 余额、连通性状态和当前 active provider
 - `mm use` 切换当前 provider，写入前自动备份
 - `show` / `export` / `import` / `remove` / `rollback`
 - 常用命令支持 `--json`，方便脚本使用
@@ -166,12 +166,18 @@ mm show kimi
 mm doctor
 ```
 
+`mm list` 会对每个 profile 发起一次低成本连通性探测，并把结果映射到
+`STATUS`。探测提示词是“这是一个接口测试，请返回 "ok" 即可。”，
+`max_tokens` 为 8。Kimi Coding Plan 的 quota 和 Kimi API 的账户余额也会在
+每次 `mm list` 时同步。余额接口没有返回币种时，MengMeng 默认按 RMB 显示。
+如果 Claude Code messages 探测失败，`STATUS` 会直接显示精简后的接口错误。
+
 ## 命令
 
 ```text
 mm init
 mm add kimi
-mm list [--refresh]
+mm list
 mm current
 mm show <profile>
 mm use <profile>
