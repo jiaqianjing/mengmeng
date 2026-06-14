@@ -1,0 +1,29 @@
+<svg width="1160" height="330" viewBox="0 0 1160 330" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1160" height="330" rx="18" fill="#0C0F14"/>
+  <rect x="1" y="1" width="1158" height="328" rx="17" stroke="#263241"/>
+  <circle cx="30" cy="30" r="7" fill="#FF5F56"/>
+  <circle cx="54" cy="30" r="7" fill="#FFBD2E"/>
+  <circle cx="78" cy="30" r="7" fill="#27C93F"/>
+  <text x="28" y="78" fill="#7DD3FC" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">$ mm list</text>
+  <text x="96" y="128" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">PROFILE</text>
+  <text x="356" y="128" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">PROVIDER</text>
+  <text x="606" y="128" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">MODEL</text>
+  <text x="806" y="128" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">LIMIT</text>
+  <text x="1010" y="128" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">STATUS</text>
+  <text x="28" y="178" fill="#67E8F9" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="26">✹</text>
+  <text x="96" y="178" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">kimi</text>
+  <text x="356" y="178" fill="#F8FAFC" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20" font-weight="700">Kimi Coding</text>
+  <text x="606" y="178" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">kimi-for-coding</text>
+  <text x="806" y="178" fill="#EF4444" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">5h 92%  week 41%</text>
+  <text x="1010" y="178" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">ok</text>
+  <text x="96" y="228" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">deepseek</text>
+  <text x="356" y="228" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">DeepSeek API</text>
+  <text x="606" y="228" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">deepseek-v4-pro[1m]</text>
+  <text x="806" y="228" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">balance ¥9.52 CNY</text>
+  <text x="1010" y="228" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">ok</text>
+  <text x="96" y="278" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">kimi-api</text>
+  <text x="356" y="278" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Kimi API</text>
+  <text x="606" y="278" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">kimi-k2.7-code</text>
+  <text x="806" y="278" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">balance ¥3.20 RMB</text>
+  <text x="1010" y="278" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">ok</text>
+</svg>

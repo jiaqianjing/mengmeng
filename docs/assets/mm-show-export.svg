@@ -1,0 +1,17 @@
+<svg width="960" height="500" viewBox="0 0 960 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="960" height="500" rx="18" fill="#0C0F14"/>
+  <rect x="1" y="1" width="958" height="498" rx="17" stroke="#263241"/>
+  <circle cx="30" cy="30" r="7" fill="#FF5F56"/>
+  <circle cx="54" cy="30" r="7" fill="#FFBD2E"/>
+  <circle cx="78" cy="30" r="7" fill="#27C93F"/>
+  <text x="28" y="78" fill="#7DD3FC" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">$ mm show deepseek</text>
+  <text x="28" y="124" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Provider: DeepSeek API</text>
+  <text x="28" y="160" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Base URL: https://api.deepseek.com/anthropic</text>
+  <text x="28" y="214" fill="#A7F3D0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Claude Code mapping:</text>
+  <text x="48" y="254" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">main:     deepseek-v4-pro[1m]</text>
+  <text x="48" y="288" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">sonnet:   deepseek-v4-pro[1m]</text>
+  <text x="48" y="322" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">haiku:    deepseek-v4-flash</text>
+  <text x="28" y="378" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Status: ok 930ms</text>
+  <text x="28" y="416" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Balance: ¥9.52 CNY available</text>
+  <text x="28" y="462" fill="#7DD3FC" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">$ mm export &gt; profiles.json</text>
+</svg>

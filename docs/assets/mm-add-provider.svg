@@ -1,0 +1,19 @@
+<svg width="960" height="470" viewBox="0 0 960 470" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="960" height="470" rx="18" fill="#0C0F14"/>
+  <rect x="1" y="1" width="958" height="468" rx="17" stroke="#263241"/>
+  <circle cx="30" cy="30" r="7" fill="#FF5F56"/>
+  <circle cx="54" cy="30" r="7" fill="#FFBD2E"/>
+  <circle cx="78" cy="30" r="7" fill="#27C93F"/>
+  <text x="28" y="78" fill="#7DD3FC" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">$ mm add kimi</text>
+  <text x="28" y="122" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">How do you want to use Kimi?</text>
+  <rect x="28" y="146" width="710" height="42" rx="8" fill="#102A3A"/>
+  <text x="48" y="174" fill="#67E8F9" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">✦ Kimi Coding Plan</text>
+  <text x="296" y="174" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18">recommended for Claude Code</text>
+  <text x="48" y="220" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">  Kimi API key</text>
+  <text x="296" y="220" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18">Moonshot/Kimi Open Platform API</text>
+  <text x="28" y="276" fill="#A7F3D0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Claude Code model mapping</text>
+  <text x="48" y="320" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">main      kimi-for-coding</text>
+  <text x="48" y="354" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">opus      kimi-for-coding</text>
+  <text x="48" y="388" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">sonnet    kimi-for-coding</text>
+  <text x="48" y="422" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">haiku     kimi-for-coding</text>
+</svg>

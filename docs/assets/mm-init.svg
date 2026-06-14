@@ -1,0 +1,16 @@
+<svg width="960" height="420" viewBox="0 0 960 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="960" height="420" rx="18" fill="#0C0F14"/>
+  <rect x="1" y="1" width="958" height="418" rx="17" stroke="#263241"/>
+  <circle cx="30" cy="30" r="7" fill="#FF5F56"/>
+  <circle cx="54" cy="30" r="7" fill="#FFBD2E"/>
+  <circle cx="78" cy="30" r="7" fill="#27C93F"/>
+  <text x="28" y="78" fill="#7DD3FC" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">$ mm init</text>
+  <text x="28" y="122" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">MengMeng first-run setup</text>
+  <text x="28" y="168" fill="#A7F3D0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Where should MengMeng store profiles?</text>
+  <rect x="28" y="190" width="600" height="42" rx="8" fill="#102A3A"/>
+  <text x="48" y="218" fill="#67E8F9" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">✦ iCloud Drive</text>
+  <text x="250" y="218" fill="#94A3B8" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18">recommended on macOS</text>
+  <text x="48" y="266" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">  Local config</text>
+  <text x="48" y="310" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">  Custom path</text>
+  <text x="28" y="364" fill="#64748B" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18">Use ↑/↓, j/k, or number keys. Press Enter to confirm.</text>
+</svg>

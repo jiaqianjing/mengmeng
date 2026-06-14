@@ -8,6 +8,21 @@ MengMeng 是一个很小的命令行工具，用来管理 Claude Code 的 provid
 
 命令名是 `mm`。
 
+它的目标不是把所有 AI 服务都做成一个复杂控制台，而是帮 Claude Code 重度
+用户少改几次 `settings.json`，少背几套 provider 环境变量，少踩一点模型映
+射和余额查询的小坑。
+
+![mm list](docs/assets/mm-list.svg)
+
+## 亮点
+
+- 极简命令：`mm init`、`mm add`、`mm list`、`mm use`
+- 交互式添加 provider，方向键选择，默认值尽量聪明
+- 自动读取 models API，并推荐 Claude Code 模型映射
+- `mm list` 同步 quota、余额和连通性状态
+- 写入 Claude Code 前自动备份，坏了可以 `mm rollback`
+- `mm export` 可以直接迁移配置到另一台只装 Claude Code 的机器
+
 ## 它解决什么问题
 
 Claude Code 的 provider 配置本身不复杂，但经常要手动改
@@ -43,8 +58,33 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - `show` / `export` / `import` / `remove` / `rollback`
 - 常用命令支持 `--json`，方便脚本使用
 
-目前支持 Kimi 和 DeepSeek。GLM、MiMo、自定义 relay 这些都还
-没有实现，后面看实际需求再加。
+## 当前支持的供应商
+
+| 供应商 | 接入方式 | Claude Code Base URL | 模型发现 | 用量展示 | 状态探测 |
+| --- | --- | --- | --- | --- | --- |
+| Kimi | Coding Plan | `https://api.kimi.com/coding` | 支持 | 5h / week quota | 支持 |
+| Kimi | API key | `https://api.moonshot.ai/anthropic` 或 `.cn` | 支持 | 账户余额 | 支持 |
+| DeepSeek | API key | `https://api.deepseek.com/anthropic` | 支持 | 账户余额 | 支持 |
+
+当前只面向 Claude Code。Codex 支持会先留在 roadmap 里，等这个小工具本身足
+够稳定再考虑。
+
+## 操作截图
+
+初始化时，MengMeng 会优先识别 macOS 上的 iCloud Drive，也支持本地目录和
+自定义路径。
+
+![mm init](docs/assets/mm-init.svg)
+
+添加 provider 时，MengMeng 会尽量把选择压缩成少数几个清晰选项，然后自动
+测试接口、拉模型、推荐 Claude Code 映射。
+
+![mm add provider](docs/assets/mm-add-provider.svg)
+
+`mm show` 用来检查单个 profile 的映射、余额和状态。`mm export` 可以导出
+完整配置，方便迁移。
+
+![mm show and export](docs/assets/mm-show-export.svg)
 
 ## 安装
 
@@ -287,6 +327,32 @@ MENGMENG_CLAUDE_CONFIG=/path/to/settings.json
 
 后来发现 `mm` 这个命令还挺顺手，就留下来了。
 
+## 后续供应商征集
+
+MengMeng 不打算一次性接入所有 provider。每新增一个 adapter，都应该真正省
+掉 Claude Code 用户的重复配置工作，而不是只把表格变长。
+
+目前欢迎优先讨论这些候选：
+
+| 候选供应商 | 可能的接入方式 | 需要确认的问题 |
+| --- | --- | --- |
+| GLM / 智谱 | Coding Plan / API key | 是否有稳定的 Claude Code / Anthropic-compatible 入口、余额或 quota API |
+| Xiaomi MiMo | Coding Plan | token plan 的 models、quota、过期时间接口 |
+| Qwen / ModelStudio | API key | Claude Code 兼容方式、模型映射、余额接口 |
+| 火山方舟 / Doubao | API key | Anthropic-compatible 支持和模型命名 |
+| SiliconFlow | API key / relay | 余额接口、模型过滤、Claude Code 推荐映射 |
+| OpenRouter | relay | 余额接口、模型别名和成本展示 |
+| 通用中转站 | Anthropic-compatible / OpenAI-compatible | 最小配置模板、连通性探测、导入导出 |
+
+如果你希望下一个版本支持某个 provider，最有帮助的信息是：
+
+- Claude Code 可用的 base URL
+- 一把只用于测试的最小权限 API key
+- models API、余额 API、quota API 文档
+- 你希望 main / opus / sonnet / haiku 分别映射到哪些模型
+
+可以直接开 issue：<https://github.com/jiaqianjing/mengmeng/issues>
+
 ## Roadmap
 
 近期可能会做：
@@ -297,6 +363,7 @@ MENGMENG_CLAUDE_CONFIG=/path/to/settings.json
 - 更稳定的 quota 展示
 - custom relay profile
 - 如果确实有人需要，再加 GLM、MiMo adapter
+- Codex 支持，等 Claude Code 体验稳定后再评估
 
 暂时不做：
 
@@ -304,6 +371,20 @@ MENGMENG_CLAUDE_CONFIG=/path/to/settings.json
 - 自动 failover
 - 通用 JSON 编辑器
 - 覆盖所有 AI coding 工具
+
+## 支持与赞助
+
+MengMeng 现在还是一个很早期的自用工具。如果它帮你少折腾了一次 Claude
+Code 配置，最直接的支持是：
+
+- 给项目点一个 Star
+- 提交 provider 接入信息或真实使用反馈
+- 帮忙测试 macOS / Linux / SSH / WSL 环境
+- 提 PR 修文档、补截图、加 adapter
+
+后续如果真的有人长期使用，我会补上更正式的赞助方式，比如 GitHub Sponsors、
+爱发电或微信赞赏码。现在先不放二维码，等项目体验和 release 流程更稳定后
+再说。
 
 ## License
 
