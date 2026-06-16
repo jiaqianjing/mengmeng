@@ -768,6 +768,44 @@ test("remove refuses active profile even with yes flag", async () => {
   }
 });
 
+test("edit refuses non-interactive use", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "",
+      createdAt: now,
+      updatedAt: now
+    }));
+    fs.writeFileSync(path.join(temp, "profiles.json"), JSON.stringify({
+      version: 1,
+      profiles: [
+        { name: "glm", provider: "glm", mode: "coding-plan", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "key", model: { main: "glm-5.1" } }
+      ]
+    }));
+
+    await assert.rejects(
+      execFileAsync(process.execPath, ["bin/mm.js", "edit", "glm"], {
+        cwd: path.resolve(__dirname, ".."),
+        env: {
+          ...process.env,
+          MENGMENG_HOME: temp,
+          MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json")
+        }
+      }),
+      (error) => {
+        assert.match(error.stderr, /mm edit is interactive/);
+        return true;
+      }
+    );
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
 function execFileAsync(file, args, opts) {
   return new Promise((resolve, reject) => {
     execFile(file, args, opts, (error, stdout, stderr) => {

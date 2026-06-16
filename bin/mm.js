@@ -114,6 +114,8 @@ async function main() {
       return currentCommand(opts);
     case "show":
       return showCommand(args.slice(1), opts);
+    case "edit":
+      return editCommand(args.slice(1), opts);
     case "use":
       return useCommand(args.slice(1), opts);
     case "doctor":
@@ -144,6 +146,7 @@ ${color.cyan("Usage:")}
   ${color.gray("mm list")}
   ${color.gray("mm current")}
   ${color.gray("mm show <profile>")}
+  ${color.gray("mm edit <profile>")}
   ${color.gray("mm use <profile>")}
   ${color.gray("mm doctor")}
   ${color.gray("mm remove <profile>")}
@@ -779,6 +782,10 @@ function showCommand(args, opts) {
   if (!name) throw new Error("usage: mm show <profile>");
   const profile = loadProfile(name);
   if (opts.json) return printJSON(redactProfile(profile));
+  printProfileDetails(profile, opts);
+}
+
+function printProfileDetails(profile, opts) {
   const color = makeColor(opts);
   console.log(`${color.gray("Profile: ")} ${color.cyan(profile.name)}`);
   console.log(`${color.gray("Provider:")} ${displayProvider(profile)}`);
@@ -789,6 +796,174 @@ function showCommand(args, opts) {
   if (profile.statusCache || profile.balanceCache) console.log(`\n${formatProfileStatus(profile, opts)}`);
   if (profile.balanceCache) console.log(`\n${formatBalance(profile.balanceCache, opts)}`);
   if (profile.quotaCache) console.log(`\n${formatQuota(profile.quotaCache, opts)}`);
+}
+
+async function editCommand(args, opts) {
+  const name = args[0];
+  if (!name) throw new Error("usage: mm edit <profile>");
+  if (opts.json || !isInteractive()) throw new Error("mm edit is interactive; use `mm show --json <profile>` and `mm import` for scripted changes");
+
+  const config = requireConfig();
+  const store = readStore(config.configDir);
+  const index = store.profiles.findIndex((p) => p.name === name);
+  if (index < 0) throw new Error(`profile "${name}" not found`);
+  const profile = cloneJSON(store.profiles[index]);
+  const color = makeColor(opts);
+  let changed = false;
+
+  for (;;) {
+    console.log("");
+    printProfileDetails(profile, opts);
+    console.log("");
+    const selected = await selectOption(`Edit ${profile.name}`, editProfileOptions(profile), 0);
+    if (selected.value === "done") break;
+    if (selected.value === "cancel") {
+      console.log("Cancelled.");
+      return;
+    }
+    if (selected.value === "apiKey") {
+      profile.apiKey = await askSecretValue("API key", profile.apiKey);
+      changed = true;
+    } else if (selected.value === "baseUrl") {
+      const answer = await ask(`Base URL [${profile.baseUrl}]: `);
+      if (answer.trim()) {
+        profile.baseUrl = answer.trim();
+        changed = true;
+      }
+    } else if (selected.value === "mapping") {
+      profile.model = await editModelMapping(await modelsForProfile(profile), normalizeProfileMapping(profile.model));
+      changed = true;
+    } else if (selected.value === "env") {
+      changed = await editProfileEnv(profile) || changed;
+    } else if (selected.value === "powerUser") {
+      profile.powerUser = !profile.powerUser;
+      changed = true;
+      console.log(`${color.gray("Power-user settings:")} ${profile.powerUser ? color.green("enabled") : color.yellow("disabled")}`);
+    } else if (selected.value === "refresh") {
+      await refreshProfileCaches(profile);
+      changed = true;
+      console.log(formatProfileStatus(profile, opts));
+    }
+  }
+
+  if (!changed) {
+    console.log("No changes.");
+    return;
+  }
+
+  await refreshProfileCaches(profile);
+  profile.updatedAt = new Date().toISOString();
+  store.profiles[index] = profile;
+  writeStore(config.configDir, store);
+
+  if (config.current === profile.name) {
+    const applyNow = await ask(`"${profile.name}" is active. Rewrite Claude Code settings now? [Y/n] `);
+    if (confirmDefaultYes(applyNow)) await useProfile(profile.name);
+  }
+
+  console.log(`${color.green("Updated profile:")} ${color.cyan(profile.name)}`);
+  console.log(formatProfileStatus(profile, opts));
+}
+
+function editProfileOptions(profile) {
+  return [
+    { label: "Done", description: "save changes", value: "done" },
+    { label: "API key", description: maskSecret(profile.apiKey), value: "apiKey" },
+    { label: "Base URL", description: profile.baseUrl || "", value: "baseUrl" },
+    { label: "Model mapping", description: profile.model?.main || "", value: "mapping" },
+    { label: "Extra env", description: `${Object.keys(profile.env || {}).length} managed vars`, value: "env" },
+    { label: "Power-user settings", description: profile.powerUser ? "enabled" : "disabled", value: "powerUser" },
+    { label: "Refresh status", description: "probe and sync quota/balance", value: "refresh" },
+    { label: "Cancel", description: "discard changes", value: "cancel" }
+  ];
+}
+
+async function askSecretValue(label, current = "") {
+  const answer = await ask(`${label} [${maskSecret(current)}]: `);
+  return answer.trim() ? answer.trim() : current;
+}
+
+async function modelsForProfile(profile) {
+  try {
+    if (profile.provider === "kimi" && profile.mode === "coding-plan") return mergeModels(await fetchKimiCodingModels(profile.apiKey), mappingModels(profile.model));
+    if (profile.provider === "kimi" && profile.mode === "api") return mergeModels(await fetchKimiAPIModels(profile.apiKey, kimiAPIOriginForProfile(profile)), mappingModels(profile.model));
+    if (profile.provider === "deepseek") return mergeModels(await fetchDeepSeekModels(profile.apiKey), mappingModels(profile.model));
+    if (profile.provider === "glm" || profile.provider === "mimo") {
+      const preset = await resolveStaticAnthropicPreset(profile.provider, { mode: profile.mode, yes: true });
+      return (await resolveStaticAnthropicModels(preset, profile.baseUrl, profile.apiKey)).models;
+    }
+  } catch (error) {
+    console.log(`Model list unavailable: ${summarizeError(error.message, 120)}`);
+  }
+  return mappingModels(profile.model);
+}
+
+function mappingModels(mapping = {}) {
+  return unique(Object.values(normalizeProfileMapping(mapping)).filter(Boolean)).map((id) => ({
+    id,
+    displayName: modelDisplayName(id),
+    contextLength: 0
+  }));
+}
+
+function normalizeProfileMapping(mapping = {}) {
+  const main = mapping.main || mapping.opus || mapping.sonnet || mapping.haiku || "";
+  return {
+    main,
+    opus: mapping.opus || main,
+    sonnet: mapping.sonnet || main,
+    haiku: mapping.haiku || main,
+    fable: mapping.fable || mapping.opus || main,
+    subagent: mapping.subagent || mapping.haiku || main
+  };
+}
+
+async function editProfileEnv(profile) {
+  profile.env ||= {};
+  const known = [
+    "ENABLE_TOOL_SEARCH",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+    "CLAUDE_CODE_EFFORT_LEVEL",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES"
+  ];
+  const keys = unique([...Object.keys(profile.env), ...known]);
+  const selected = await selectOption("Edit managed env", [
+    { label: "Back", value: "back" },
+    ...keys.map((key) => ({
+      label: key,
+      description: String(profile.env[key] ?? ""),
+      value: key
+    }))
+  ], 0);
+  if (selected.value === "back") return false;
+  const current = profile.env[selected.value] ?? "";
+  const answer = await ask(`${selected.value} [${current}] (blank deletes): `);
+  if (!answer.trim()) delete profile.env[selected.value];
+  else profile.env[selected.value] = answer.trim();
+  return true;
+}
+
+async function refreshProfileCaches(profile) {
+  if (profile.provider === "kimi" && profile.mode === "coding-plan") profile.quotaCache = await cacheOrError(() => fetchKimiQuota(profile.apiKey), profile.provider);
+  if (profile.provider === "glm" && profile.mode === "coding-plan") profile.quotaCache = await cacheOrError(() => fetchGlmQuota(profile.baseUrl, profile.apiKey), profile.provider);
+  if (profile.provider === "kimi" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchKimiAPIBalance(kimiAPIOriginForProfile(profile), profile.apiKey), profile.provider);
+  if (profile.provider === "deepseek" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchDeepSeekBalance(profile.apiKey), profile.provider);
+  profile.statusCache = await probeProfileStatus(profile);
+}
+
+async function cacheOrError(fn, provider) {
+  try {
+    return await fn();
+  } catch (error) {
+    return {
+      success: false,
+      provider,
+      queriedAt: new Date().toISOString(),
+      error: error.message
+    };
+  }
 }
 
 async function useCommand(args, opts) {
@@ -1815,6 +1990,10 @@ function mkdirp(dir) {
 
 function printJSON(value) {
   console.log(JSON.stringify(value, null, 2));
+}
+
+function cloneJSON(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function displayProvider(profile) {

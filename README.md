@@ -266,6 +266,7 @@ mm add deepseek
 mm list
 mm current
 mm show <profile>
+mm edit <profile>
 mm use <profile>
 mm doctor
 mm remove <profile>
