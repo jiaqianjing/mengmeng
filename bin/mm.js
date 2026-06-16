@@ -17,9 +17,24 @@ const DEEPSEEK_API_ORIGIN = "https://api.deepseek.com";
 const DEEPSEEK_ANTHROPIC_BASE = `${DEEPSEEK_API_ORIGIN}/anthropic`;
 const DEEPSEEK_MODELS_URL = `${DEEPSEEK_API_ORIGIN}/models`;
 const DEEPSEEK_BALANCE_URL = `${DEEPSEEK_API_ORIGIN}/user/balance`;
+const GLM_ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic";
+const MIMO_API_ANTHROPIC_BASE = "https://api.xiaomimimo.com/anthropic";
+const MIMO_TOKEN_PLAN_ANTHROPIC_BASE = "https://token-plan-cn.xiaomimimo.com/anthropic";
 const PROBE_PROMPT = "这是一个接口测试，请返回 \"ok\" 即可。";
 const PROBE_MAX_TOKENS = 8;
 const PROBE_TIMEOUT_MS = 20000;
+const CLAUDE_ONE_M_MARKER = "[1M]";
+const KNOWN_COMPAT_SUFFIXES = [
+  "/api/claudecode",
+  "/api/anthropic",
+  "/apps/anthropic",
+  "/api/coding",
+  "/claudecode",
+  "/anthropic",
+  "/step_plan",
+  "/coding",
+  "/claude"
+];
 const SUPPORTED_PROVIDERS = [
   {
     id: "kimi",
@@ -30,6 +45,16 @@ const SUPPORTED_PROVIDERS = [
     id: "deepseek",
     name: "DeepSeek API",
     aliases: ["deepseek-api", "ds"]
+  },
+  {
+    id: "glm",
+    name: "Zhipu GLM",
+    aliases: ["zhipu", "zhipu-glm", "bigmodel", "bigmodel-glm"]
+  },
+  {
+    id: "mimo",
+    name: "Xiaomi MiMo",
+    aliases: ["xiaomi", "xiaomi-mimo", "mimo-token-plan"]
   }
 ];
 
@@ -369,7 +394,9 @@ async function addCommand(args, opts) {
   const { flags, rest } = parseFlags(args, {
     name: "value",
     mode: "value",
-    "key-env": "value"
+    "key-env": "value",
+    "base-url": "value",
+    model: "value"
   });
   const providerInput = rest[0];
   const provider = normalizeProvider(providerInput);
@@ -377,6 +404,7 @@ async function addCommand(args, opts) {
   if (!isSupportedProvider(provider)) throw new Error(formatUnsupportedProvider(providerInput));
   if (provider === "kimi") return addKimiCommand(flags, opts);
   if (provider === "deepseek") return addDeepSeekCommand(flags, opts);
+  if (["glm", "mimo"].includes(provider)) return addStaticAnthropicCommand(provider, flags, opts);
   throw new Error(formatUnsupportedProvider(providerInput));
 }
 
@@ -566,6 +594,89 @@ async function addDeepSeekCommand(flags, opts) {
   }
 }
 
+async function addStaticAnthropicCommand(provider, flags, opts) {
+  const preset = await resolveStaticAnthropicPreset(provider, flags);
+
+  let profileName = flags.name || preset.defaultName;
+  if (isInteractive() && !flags.yes) {
+    const answer = await ask(`Profile name [${profileName}]: `);
+    if (answer.trim()) profileName = answer.trim();
+  }
+
+  let baseUrl = flags["base-url"] || preset.baseUrl;
+  if (isInteractive() && !flags.yes && preset.allowBaseUrlEdit) {
+    const answer = await ask(`Base URL [${baseUrl}]: `);
+    if (answer.trim()) baseUrl = answer.trim();
+  }
+
+  const apiKey = await resolveApiKey(flags, preset.keyDefaults);
+  const modelInfo = await resolveStaticAnthropicModels(preset, baseUrl, apiKey);
+  const models = modelInfo.models;
+  let mapping = flags.model ? sameModelMapping(flags.model) : { ...preset.mapping };
+
+  if (isInteractive() && !flags.yes) {
+    mapping = await editModelMapping(models, mapping);
+  }
+
+  let powerUser = Boolean(flags["power-user"]);
+  if (isInteractive() && !flags.yes) {
+    const answer = await ask("Enable Claude Code power-user permission settings? [y/N] ");
+    powerUser = confirmDefaultNo(answer);
+  }
+
+  let quotaCache = null;
+  if (provider === "glm" && preset.mode === "coding-plan") {
+    try {
+      quotaCache = await fetchGlmQuota(baseUrl, apiKey);
+    } catch {
+      quotaCache = null;
+    }
+  }
+
+  console.error(`Checking ${preset.displayName} request path...`);
+  const config = requireConfig();
+  const store = readStore(config.configDir);
+  const now = new Date().toISOString();
+  const existing = store.profiles.find((p) => p.name === profileName);
+  if (existing && !flags.yes && isInteractive()) {
+    const ok = await ask(`Profile "${profileName}" already exists. Overwrite? [y/N] `);
+    if (!confirmDefaultNo(ok)) throw new UserCancelled();
+  } else if (existing && !flags.yes) {
+    throw new Error(`profile "${profileName}" already exists; rerun with --yes to overwrite`);
+  }
+
+  const profile = {
+    name: profileName,
+    provider,
+    mode: preset.mode,
+    baseUrl,
+    apiKey,
+    model: mapping,
+    env: preset.env,
+    powerUser,
+    quotaCache,
+    balanceCache: null,
+    statusCache: null,
+    apiOrigin: "",
+    modelSource: modelInfo.modelSource,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+  profile.statusCache = await probeProfileStatus(profile);
+  upsertProfile(store, profile);
+  writeStore(config.configDir, store);
+
+  if (opts.json) return printJSON(redactProfile(profile));
+  const color = makeColor(opts);
+  console.log(`${color.green("Saved provider:")} ${color.cyan(profileName)}`);
+  if (quotaCache?.success) console.log(formatQuota(quotaCache, opts));
+  console.log(formatProfileStatus(profile, opts));
+  if (isInteractive() && !flags.yes) {
+    const useNow = await ask(`Use ${profileName} now? [Y/n] `);
+    if (confirmDefaultYes(useNow)) await useProfile(profileName);
+  }
+}
+
 async function listCommand(args, opts) {
   if (args.length) throw new Error("usage: mm list");
   const config = requireConfig();
@@ -575,6 +686,18 @@ async function listCommand(args, opts) {
     if (profile.provider === "kimi" && profile.mode === "coding-plan") {
       try {
         profile.quotaCache = await fetchKimiQuota(profile.apiKey);
+      } catch (error) {
+        profile.quotaCache = {
+          success: false,
+          provider: profile.provider,
+          queriedAt: new Date().toISOString(),
+          error: error.message
+        };
+      }
+    }
+    if (profile.provider === "glm" && profile.mode === "coding-plan") {
+      try {
+        profile.quotaCache = await fetchGlmQuota(profile.baseUrl, profile.apiKey);
       } catch (error) {
         profile.quotaCache = {
           success: false,
@@ -702,19 +825,13 @@ async function removeCommand(args, opts) {
   const store = readStore(config.configDir);
   const index = store.profiles.findIndex((p) => p.name === name);
   if (index < 0) throw new Error(`profile "${name}" not found`);
-  if (config.current === name && !flags.yes) {
-    if (!isInteractive()) throw new Error("profile is active; rerun with --yes to remove saved profile while leaving Claude settings unchanged");
-    console.log(`"${name}" is currently active in Claude Code.`);
-    const ok = await ask("Remove saved profile but leave Claude Code settings as-is? [Y/n] ");
-    if (!confirmDefaultYes(ok)) throw new UserCancelled();
+  if (config.current === name) {
+    const other = store.profiles.find((p) => p.name !== name)?.name;
+    const hint = other ? ` Run \`mm use ${other}\` first, then remove "${name}".` : " Add or switch to another profile first.";
+    throw new Error(`profile "${name}" is active and cannot be removed.${hint}`);
   }
   store.profiles.splice(index, 1);
   writeStore(config.configDir, store);
-  if (config.current === name) {
-    config.current = "";
-    config.updatedAt = new Date().toISOString();
-    writeConfig(config);
-  }
   if (opts.json) return printJSON({ success: true, removed: name });
   const color = makeColor(opts);
   console.log(`${color.green("Removed profile:")} ${color.cyan(name)}`);
@@ -826,11 +943,15 @@ function settingsForProfile(profile, { redact }) {
     ANTHROPIC_AUTH_TOKEN: key,
     ANTHROPIC_MODEL: profile.model.main,
     ANTHROPIC_DEFAULT_OPUS_MODEL: profile.model.opus,
+    ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: modelDisplayName(profile.model.opus, profile.model.opusName),
     ANTHROPIC_DEFAULT_SONNET_MODEL: profile.model.sonnet,
+    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: modelDisplayName(profile.model.sonnet, profile.model.sonnetName),
     ANTHROPIC_DEFAULT_HAIKU_MODEL: profile.model.haiku,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: modelDisplayName(profile.model.haiku, profile.model.haikuName),
+    ANTHROPIC_DEFAULT_FABLE_MODEL: profile.model.fable || profile.model.opus,
+    ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: modelDisplayName(profile.model.fable || profile.model.opus, profile.model.fableName || profile.model.opusName),
     CLAUDE_CODE_SUBAGENT_MODEL: profile.model.subagent,
-    ENABLE_TOOL_SEARCH: profile.env.ENABLE_TOOL_SEARCH,
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW: profile.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    ...cleanEnv(profile.env || {})
   };
   const settings = { env };
   if (profile.powerUser) {
@@ -860,6 +981,91 @@ function keyDefaultsForProvider(provider) {
       prompt: "DeepSeek API key"
     };
   }
+  if (provider === "glm") {
+    return {
+      envNames: ["GLM_API_KEY", "ZHIPU_API_KEY", "BIGMODEL_API_KEY"],
+      prompt: "Zhipu GLM API key"
+    };
+  }
+  if (provider === "mimo") {
+    return {
+      envNames: ["MIMO_API_KEY", "XIAOMI_MIMO_API_KEY", "MIMO_TOKEN_PLAN_API_KEY", "XIAOMI_MIMO_TOKEN_PLAN_API_KEY"],
+      prompt: "Xiaomi MiMo API key"
+    };
+  }
+  throw new Error(`unknown provider "${provider}"`);
+}
+
+async function resolveStaticAnthropicPreset(provider, flags) {
+  if (provider === "glm") {
+    return {
+      defaultName: "glm",
+      displayName: "Zhipu GLM",
+      mode: "coding-plan",
+      baseUrl: GLM_ANTHROPIC_BASE,
+      allowBaseUrlEdit: false,
+      keyDefaults: keyDefaultsForProvider("glm"),
+      modelSource: "static-cc-switch-preset",
+      models: [
+        { id: "glm-5.1", displayName: "GLM-5.1", contextLength: 200000 },
+        { id: "glm-5.1[1M]", displayName: "GLM-5.1 1M", contextLength: 1000000 }
+      ],
+      mapping: {
+        main: "glm-5.1",
+        opus: "glm-5.1[1M]",
+        sonnet: "glm-5.1[1M]",
+        haiku: "glm-5.1",
+        fable: "glm-5.1[1M]",
+        subagent: "glm-5.1"
+      },
+      env: {
+        ENABLE_TOOL_SEARCH: "true",
+        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "32000",
+        CLAUDE_CODE_EFFORT_LEVEL: "xhigh",
+        ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES: "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking"
+      }
+    };
+  }
+
+  if (provider === "mimo") {
+    let mode = flags.mode || "";
+    if (!mode && isInteractive() && !flags.yes) {
+      const selected = await selectOption("How do you want to use Xiaomi MiMo?", [
+        {
+          label: "MiMo Token Plan",
+          description: "China token-plan endpoint",
+          value: "token-plan"
+        },
+        {
+          label: "MiMo API key",
+          description: "pay-as-you-go API endpoint",
+          value: "api"
+        }
+      ], 0);
+      mode = selected.value;
+    }
+    if (!mode) mode = "token-plan";
+    if (!["token-plan", "api"].includes(mode)) throw new Error(`unsupported MiMo mode "${mode}"; use token-plan or api`);
+    return {
+      defaultName: mode === "api" ? "mimo-api" : "mimo",
+      displayName: mode === "api" ? "Xiaomi MiMo API" : "Xiaomi MiMo Token Plan",
+      mode,
+      baseUrl: mode === "api" ? MIMO_API_ANTHROPIC_BASE : MIMO_TOKEN_PLAN_ANTHROPIC_BASE,
+      allowBaseUrlEdit: false,
+      keyDefaults: keyDefaultsForProvider("mimo"),
+      modelSource: "static-cc-switch-preset",
+      models: [
+        { id: "mimo-v2.5-pro", displayName: "MiMo V2.5 Pro", contextLength: 1048576 },
+        { id: "mimo-v2.5", displayName: "MiMo V2.5", contextLength: 1048576 }
+      ],
+      mapping: sameModelMapping("mimo-v2.5-pro"),
+      env: {
+        ENABLE_TOOL_SEARCH: "true"
+      }
+    };
+  }
+
   throw new Error(`unknown provider "${provider}"`);
 }
 
@@ -953,6 +1159,41 @@ async function fetchDeepSeekBalance(apiKey) {
   return parseDeepSeekBalance(JSON.parse(text));
 }
 
+async function resolveStaticAnthropicModels(preset, baseUrl, apiKey) {
+  const fallback = {
+    models: preset.models,
+    modelSource: preset.modelSource
+  };
+  const candidates = buildModelsUrlCandidates(baseUrl, preset.modelsUrl);
+  const errors = [];
+  for (const url of candidates) {
+    try {
+      const models = await fetchGenericModels(url, apiKey);
+      return {
+        models: mergeModels(models, preset.models),
+        modelSource: url
+      };
+    } catch (error) {
+      errors.push(`${url}: ${error.message}`);
+    }
+  }
+  if (errors.length) {
+    fallback.modelSource = `${preset.modelSource}; models fetch failed`;
+  }
+  return fallback;
+}
+
+async function fetchGenericModels(url, apiKey) {
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${summarizeError(text, 160)}`);
+  const models = parseGenericModels(JSON.parse(text));
+  if (!models.length) throw new Error("models request returned no models");
+  return models;
+}
+
 function parseKimiModels(body) {
   return (body.data || [])
     .filter((item) => item.id)
@@ -971,6 +1212,67 @@ function parseDeepSeekModels(body) {
       displayName: item.id,
       contextLength: 0
     }));
+}
+
+function parseGenericModels(body) {
+  return (body.data || [])
+    .filter((item) => item.id)
+    .map((item) => ({
+      id: item.id,
+      displayName: item.display_name || item.name || item.id,
+      contextLength: number(item.context_length || item.contextWindow || item.context_window)
+    }));
+}
+
+function mergeModels(primary, fallback) {
+  const seen = new Set();
+  const merged = [];
+  for (const model of [...primary, ...fallback]) {
+    if (!model?.id || seen.has(model.id)) continue;
+    seen.add(model.id);
+    merged.push(model);
+  }
+  return merged;
+}
+
+function buildModelsUrlCandidates(baseUrl, override = "") {
+  const explicit = String(override || "").trim();
+  if (explicit) return [explicit];
+
+  const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
+  if (!trimmed) return [];
+
+  const candidates = [];
+  if (endsWithVersionSegment(trimmed)) {
+    candidates.push(`${trimmed}/models`);
+    if (!trimmed.endsWith("/v1")) candidates.push(`${trimmed}/v1/models`);
+  } else {
+    candidates.push(`${trimmed}/v1/models`);
+  }
+
+  const stripped = stripCompatSuffix(trimmed);
+  if (stripped && stripped.includes("://")) {
+    candidates.push(`${stripped}/v1/models`);
+    candidates.push(`${stripped}/models`);
+  }
+
+  return unique(candidates);
+}
+
+function stripCompatSuffix(baseUrl) {
+  for (const suffix of KNOWN_COMPAT_SUFFIXES) {
+    if (baseUrl.endsWith(suffix)) return baseUrl.slice(0, -suffix.length).replace(/\/+$/, "");
+  }
+  return "";
+}
+
+function endsWithVersionSegment(url) {
+  const segment = url.split("/").pop() || "";
+  return /^v\d+$/i.test(segment);
+}
+
+function unique(values) {
+  return values.filter((value, index) => values.indexOf(value) === index);
 }
 
 function withDeepSeekClaudeVariants(models) {
@@ -1029,6 +1331,37 @@ async function fetchKimiQuota(apiKey) {
     };
   }
   return parseKimiQuota(JSON.parse(text));
+}
+
+async function fetchGlmQuota(baseUrl, apiKey) {
+  const origin = glmQuotaOrigin(baseUrl);
+  if (!origin) throw new Error("GLM quota endpoint is not known for this base URL");
+  const url = `${origin}/api/monitor/usage/quota/limit`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: apiKey,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "Accept-Language": "en-US,en"
+    }
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    return {
+      success: false,
+      provider: "glm",
+      queriedAt: new Date().toISOString(),
+      error: `HTTP ${res.status}: ${text}`
+    };
+  }
+  return parseGlmQuota(JSON.parse(text));
+}
+
+function glmQuotaOrigin(baseUrl = "") {
+  const value = String(baseUrl).toLowerCase();
+  if (value.includes("bigmodel.cn")) return "https://open.bigmodel.cn";
+  if (value.includes("api.z.ai") || value.includes("z.ai")) return "https://api.z.ai";
+  return "";
 }
 
 async function probeProfileStatus(profile) {
@@ -1125,7 +1458,7 @@ async function fetchClaudeProbe(endpoint, profile, authMode, options = {}) {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
   } catch (error) {
     if (error.name === "AbortError") throw new Error(`request timed out after ${PROBE_TIMEOUT_MS / 1000}s`);
-    throw error;
+    throw new Error(formatFetchError(error));
   } finally {
     clearTimeout(timeout);
   }
@@ -1133,6 +1466,13 @@ async function fetchClaudeProbe(endpoint, profile, authMode, options = {}) {
 
 function requiresEnabledThinking(error) {
   return /invalid thinking: only type=enabled/i.test(error.message || String(error));
+}
+
+function formatFetchError(error) {
+  const message = error?.message || String(error);
+  const cause = error?.cause;
+  const detail = cause?.code || cause?.message || "";
+  return detail && !message.includes(detail) ? `${message}: ${detail}` : message;
 }
 
 function parseKimiQuota(body) {
@@ -1165,10 +1505,73 @@ function parseKimiQuota(body) {
   return { success: true, provider: "kimi", queriedAt: new Date().toISOString(), tiers };
 }
 
+function parseGlmQuota(body) {
+  if (body.success === false) throw new Error(`quota request failed: ${body.msg || body.message || "unknown"}`);
+  const data = body.data || {};
+  const tiers = parseGlmQuotaTiers(data);
+  return {
+    success: true,
+    provider: "glm",
+    queriedAt: new Date().toISOString(),
+    tiers,
+    level: data.level || ""
+  };
+}
+
+function parseGlmQuotaTiers(data) {
+  const slots = { fiveHour: null, week: null };
+  const unclassified = [];
+  for (const item of data.limits || []) {
+    const type = String(item.type || "");
+    if (type.toUpperCase() !== "TOKENS_LIMIT") continue;
+    const entry = {
+      resetMs: Number.isFinite(Number(item.nextResetTime)) ? Number(item.nextResetTime) : null,
+      tier: {
+        name: "",
+        usedPct: number(item.percentage),
+        resetTime: formatMillisISO(item.nextResetTime)
+      }
+    };
+    if (Number(item.unit) === 3 && !slots.fiveHour) slots.fiveHour = entry.tier;
+    else if (Number(item.unit) === 6 && !slots.week) slots.week = entry.tier;
+    else unclassified.push(entry);
+  }
+
+  unclassified.sort((a, b) => {
+    if (a.resetMs === null && b.resetMs !== null) return -1;
+    if (a.resetMs !== null && b.resetMs === null) return 1;
+    return (a.resetMs ?? Number.MIN_SAFE_INTEGER) - (b.resetMs ?? Number.MIN_SAFE_INTEGER);
+  });
+
+  for (const entry of unclassified) {
+    if (!slots.fiveHour) slots.fiveHour = entry.tier;
+    else if (!slots.week) slots.week = entry.tier;
+  }
+
+  const tiers = [];
+  if (slots.fiveHour) tiers.push({ ...slots.fiveHour, name: "5h" });
+  if (slots.week) tiers.push({ ...slots.week, name: "week" });
+  return tiers;
+}
+
+function formatMillisISO(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  try {
+    return new Date(n).toISOString();
+  } catch {
+    return "";
+  }
+}
+
 function recommendMapping(models) {
   const sorted = [...models].sort((a, b) => modelScore(b) - modelScore(a));
   const main = sorted[0]?.id || "kimi-for-coding";
   return { main, opus: main, sonnet: main, haiku: main, subagent: main };
+}
+
+function sameModelMapping(model) {
+  return { main: model, opus: model, sonnet: model, haiku: model, fable: model, subagent: model };
 }
 
 function recommendDeepSeekMapping(models) {
@@ -1180,6 +1583,7 @@ function recommendDeepSeekMapping(models) {
     opus: pro,
     sonnet: pro,
     haiku: flash,
+    fable: pro,
     subagent: flash
   };
 }
@@ -1198,7 +1602,7 @@ async function editModelMapping(models, mapping) {
   for (;;) {
     const selected = await selectOption("Claude Code model mapping", modelMappingOptions(current), 0);
     if (selected.value === "done") return current;
-    current[selected.value] = await chooseModel(modelSlotLabel(selected.value), models, current[selected.value]);
+    current[selected.value] = await chooseModel(modelSlotLabel(selected.value), models, current[selected.value] || current.opus || current.main);
   }
 }
 
@@ -1213,6 +1617,7 @@ function modelMappingOptions(mapping) {
     { label: `Opus     ${mapping.opus}`, description: "ANTHROPIC_DEFAULT_OPUS_MODEL", value: "opus" },
     { label: `Sonnet   ${mapping.sonnet}`, description: "ANTHROPIC_DEFAULT_SONNET_MODEL", value: "sonnet" },
     { label: `Haiku    ${mapping.haiku}`, description: "ANTHROPIC_DEFAULT_HAIKU_MODEL", value: "haiku" },
+    { label: `Fable    ${mapping.fable || mapping.opus}`, description: "ANTHROPIC_DEFAULT_FABLE_MODEL", value: "fable" },
     { label: `Subagent ${mapping.subagent}`, description: "CLAUDE_CODE_SUBAGENT_MODEL", value: "subagent" }
   ];
 }
@@ -1223,6 +1628,7 @@ function modelSlotLabel(slot) {
     opus: "Opus",
     sonnet: "Sonnet",
     haiku: "Haiku",
+    fable: "Fable",
     subagent: "Subagent"
   }[slot] || slot;
 }
@@ -1567,7 +1973,8 @@ function extractErrorMessageFromText(text) {
 }
 
 function printMapping(mapping, color = makeColor({ noColor: true })) {
-  for (const slot of ["main", "opus", "sonnet", "haiku", "subagent"]) {
+  for (const slot of ["main", "opus", "sonnet", "haiku", "fable", "subagent"]) {
+    if (!mapping[slot]) continue;
     console.log(`  ${color.gray(`${slot}:`.padEnd(10))}${color.cyan(mapping[slot])}`);
   }
 }
@@ -1591,6 +1998,21 @@ function truncate(value, max) {
 function truncatePlain(value, max) {
   value = stripAnsi(value);
   return value.length <= max ? value : `${value.slice(0, max - 1)}…`;
+}
+
+function modelDisplayName(model, explicitName) {
+  if (explicitName) return explicitName;
+  return stripClaudeOneMMarker(model);
+}
+
+function stripClaudeOneMMarker(model = "") {
+  const value = String(model || "").trimEnd();
+  if (!value.toLowerCase().endsWith(CLAUDE_ONE_M_MARKER.toLowerCase())) return value;
+  return value.slice(0, -CLAUDE_ONE_M_MARKER.length).trimEnd();
+}
+
+function cleanEnv(env) {
+  return Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined && value !== null && value !== ""));
 }
 
 function pad(value, length) {
@@ -1820,6 +2242,7 @@ module.exports = {
   APP_VERSION,
   parseKimiModels,
   parseKimiQuota,
+  parseGlmQuota,
   parseKimiBalance,
   parseDeepSeekModels,
   parseDeepSeekBalance,

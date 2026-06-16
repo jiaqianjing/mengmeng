@@ -51,9 +51,10 @@ Initial provider targets:
 - Kimi Coding Plan.
 - Kimi API.
 - DeepSeek API.
-- Xiaomi MiMo Coding Plan.
+- Xiaomi MiMo Token Plan / API.
 - GLM Coding Plan.
-- Custom OpenAI-compatible or Anthropic-compatible relay.
+- Custom Anthropic-compatible relay ergonomics later, once the built-in
+  official-plan adapters are stable.
 
 Core workflows:
 
@@ -186,6 +187,8 @@ Each built-in provider adapter should answer:
 
 Adapters should keep provider-specific logic local. The command layer should not
 know special-case details for Kimi, MiMo, GLM, DeepSeek, or future providers.
+Very small static presets are acceptable when they avoid pulling desktop-style
+provider management into the CLI.
 
 ## Model Selection Rules
 

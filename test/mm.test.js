@@ -10,6 +10,7 @@ const {
   APP_VERSION,
   parseKimiModels,
   parseKimiQuota,
+  parseGlmQuota,
   parseKimiBalance,
   parseDeepSeekModels,
   parseDeepSeekBalance,
@@ -103,6 +104,41 @@ test("parseKimiQuota extracts 5h and weekly tiers", () => {
   assert.equal(quota.tiers[0].usedPct, 40);
   assert.equal(quota.tiers[1].name, "week");
   assert.equal(quota.tiers[1].usedPct, 25);
+});
+
+test("parseGlmQuota extracts 5h and weekly token tiers", () => {
+  const quota = parseGlmQuota({
+    success: true,
+    data: {
+      level: "pro",
+      limits: [
+        {
+          type: "TOKENS_LIMIT",
+          unit: 6,
+          number: 7,
+          percentage: 52.5,
+          nextResetTime: 1770000000000
+        },
+        {
+          type: "TOKENS_LIMIT",
+          unit: 3,
+          number: 5,
+          percentage: 12.25,
+          nextResetTime: 1769900000000
+        }
+      ]
+    }
+  });
+
+  assert.equal(quota.success, true);
+  assert.equal(quota.provider, "glm");
+  assert.equal(quota.level, "pro");
+  assert.equal(quota.tiers.length, 2);
+  assert.equal(quota.tiers[0].name, "5h");
+  assert.equal(quota.tiers[0].usedPct, 12.25);
+  assert.equal(quota.tiers[1].name, "week");
+  assert.equal(quota.tiers[1].usedPct, 52.5);
+  assert.match(quota.tiers[0].resetTime, /^2026-/);
 });
 
 test("parseKimiBalance extracts available voucher and cash balances", () => {
@@ -203,6 +239,8 @@ test("detectStorageCandidates always includes local and custom choices", () => {
 test("provider names support aliases and friendly suggestions", () => {
   assert.equal(normalizeProvider("moonshot"), "kimi");
   assert.equal(normalizeProvider("ds"), "deepseek");
+  assert.equal(normalizeProvider("zhipu"), "glm");
+  assert.equal(normalizeProvider("xiaomi-mimo"), "mimo");
   const message = formatUnsupportedProvider("kim");
   assert.match(message, /Did you mean: mm add kimi/);
   assert.match(message, /Supported providers:/);
@@ -229,6 +267,8 @@ test("settingsForProfile supports Kimi API mode", () => {
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://api.moonshot.ai/anthropic");
   assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "sk-api-test");
   assert.equal(settings.env.ANTHROPIC_MODEL, "kimi-k2.6");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "kimi-k2.6");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, "kimi-k2.6");
 });
 
 test("settingsForProfile supports DeepSeek API mode", () => {
@@ -253,6 +293,36 @@ test("settingsForProfile supports DeepSeek API mode", () => {
   assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "sk-deepseek-test");
   assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-v4-pro[1m]");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "deepseek-v4-flash");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, "deepseek-v4-pro");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-v4-pro[1m]");
+});
+
+test("settingsForProfile carries GLM 1M mapping and extra Claude env", () => {
+  const settings = settingsForProfile({
+    baseUrl: "https://open.bigmodel.cn/api/anthropic",
+    apiKey: "glm-test-key",
+    model: {
+      main: "glm-5.1",
+      opus: "glm-5.1[1M]",
+      sonnet: "glm-5.1[1M]",
+      haiku: "glm-5.1",
+      fable: "glm-5.1[1M]",
+      subagent: "glm-5.1"
+    },
+    env: {
+      ENABLE_TOOL_SEARCH: "true",
+      CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
+      ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES: "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking"
+    },
+    powerUser: false
+  }, { redact: false });
+
+  assert.equal(settings.env.ANTHROPIC_MODEL, "glm-5.1");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "glm-5.1[1M]");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, "glm-5.1");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "glm-5.1[1M]");
+  assert.equal(settings.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS, "1");
+  assert.match(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES, /adaptive_thinking/);
 });
 
 test("listStatus explains API profiles without quota endpoint", () => {
@@ -273,6 +343,28 @@ test("listStatus explains API profiles without quota endpoint", () => {
   }, plainColor);
 
   assert.equal(status.limit, "balance ¥49.59 RMB");
+  assert.equal(status.status, "ok");
+});
+
+test("listStatus displays GLM quota tiers", () => {
+  const status = listStatus({
+    provider: "glm",
+    mode: "coding-plan",
+    quotaCache: {
+      success: true,
+      tiers: [
+        { name: "5h", usedPct: 12.25 },
+        { name: "week", usedPct: 52.5 }
+      ]
+    },
+    statusCache: {
+      success: true,
+      checkedAt: "2026-06-14T00:00:00Z",
+      latencyMs: 300
+    }
+  }, plainColor);
+
+  assert.equal(status.limit, "5h 12%  week 53%");
   assert.equal(status.status, "ok");
 });
 
@@ -538,6 +630,140 @@ test("list retries Kimi API probe with enabled thinking when required", async ()
     assert.equal(store.profiles[0].probeThinking, "enabled");
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("add glm saves a static Anthropic-compatible profile", async () => {
+  let requestBody = "";
+  let requestedModels = false;
+  const server = http.createServer((req, res) => {
+    if (req.url === "/v1/models") {
+      requestedModels = true;
+      assert.equal(req.headers.authorization, "Bearer glm-test-key");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        data: [
+          { id: "glm-test", display_name: "GLM Test" },
+          { id: "glm-5.1", display_name: "GLM-5.1" }
+        ]
+      }));
+      return;
+    }
+
+    assert.equal(req.url, "/v1/messages");
+    assert.equal(req.headers.authorization, "Bearer glm-test-key");
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      requestBody += chunk;
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        id: "msg_glm",
+        type: "message",
+        role: "assistant",
+        model: "glm-test",
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 8, output_tokens: 1 }
+      }));
+    });
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "",
+      createdAt: now,
+      updatedAt: now
+    }));
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      "bin/mm.js",
+      "--json",
+      "add",
+      "glm",
+      "--yes",
+      "--base-url",
+      `http://127.0.0.1:${port}`,
+      "--model",
+      "glm-test"
+    ], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json"),
+        GLM_API_KEY: "glm-test-key"
+      }
+    });
+
+    const profile = JSON.parse(stdout);
+    assert.equal(profile.provider, "glm");
+    assert.equal(profile.mode, "coding-plan");
+    assert.equal(profile.baseUrl, `http://127.0.0.1:${port}`);
+    assert.equal(profile.model.main, "glm-test");
+    assert.equal(profile.modelSource, `http://127.0.0.1:${port}/v1/models`);
+    assert.equal(profile.statusCache.success, true);
+    assert.equal(requestedModels, true);
+    assert.equal(JSON.parse(requestBody).model, "glm-test");
+
+    const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
+    assert.equal(store.profiles[0].provider, "glm");
+    assert.equal(store.profiles[0].env.ENABLE_TOOL_SEARCH, "true");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("remove refuses active profile even with yes flag", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "glm",
+      createdAt: now,
+      updatedAt: now
+    }));
+    fs.writeFileSync(path.join(temp, "profiles.json"), JSON.stringify({
+      version: 1,
+      profiles: [
+        { name: "glm", provider: "glm", mode: "coding-plan", model: { main: "glm-5.1" } },
+        { name: "mimo", provider: "mimo", mode: "token-plan", model: { main: "mimo-v2.5-pro" } }
+      ]
+    }));
+
+    await assert.rejects(
+      execFileAsync(process.execPath, ["bin/mm.js", "remove", "glm", "--yes"], {
+        cwd: path.resolve(__dirname, ".."),
+        env: {
+          ...process.env,
+          MENGMENG_HOME: temp,
+          MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json")
+        }
+      }),
+      (error) => {
+        assert.match(error.stderr, /profile "glm" is active and cannot be removed/);
+        assert.match(error.stderr, /mm use mimo/);
+        return true;
+      }
+    );
+
+    const config = JSON.parse(fs.readFileSync(path.join(temp, "config.json"), "utf8"));
+    const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
+    assert.equal(config.current, "glm");
+    assert.deepEqual(store.profiles.map((profile) => profile.name), ["glm", "mimo"]);
+  } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });

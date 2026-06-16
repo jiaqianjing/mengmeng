@@ -4,7 +4,8 @@ MengMeng 是一个很小的命令行工具，用来管理 Claude Code 的 provid
 配置。
 
 它现在只专注一件事：在 macOS、Linux、SSH 服务器、WSL、远程开发机这些
-终端环境里，更省心地配置和切换 Kimi Coding Plan、Kimi API 和 DeepSeek API。
+终端环境里，更省心地配置和切换 Kimi Coding Plan、Kimi API、DeepSeek API、
+Zhipu GLM 和 Xiaomi MiMo。
 
 命令名是 `mm`。
 
@@ -51,6 +52,8 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - `mm init` 首次初始化
 - `mm add kimi` 添加 Kimi profile，支持 Kimi Coding Plan 和 Kimi API
 - `mm add deepseek` 添加 DeepSeek API profile
+- `mm add glm` 添加 Zhipu GLM profile
+- `mm add mimo` 添加 Xiaomi MiMo Token Plan 或 API profile
 - 请求 provider models API，并自动推荐 Claude Code 模型映射
 - 可选开启 Claude Code power-user permission 设置
 - `mm list` 查看 profile，显示 Coding Plan quota、API 余额、连通性状态和当前 active provider
@@ -67,6 +70,8 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 | Kimi | Coding Plan | `https://api.kimi.com/coding` | 支持 | 5h / week quota | 支持 |
 | Kimi | API key | `https://api.moonshot.ai/anthropic` 或 `.cn` | 支持 | 账户余额 | 支持 |
 | DeepSeek | API key | `https://api.deepseek.com/anthropic` | 支持 | 账户余额 | 支持 |
+| Zhipu GLM | Coding Plan | `https://open.bigmodel.cn/api/anthropic` | 支持，失败回退默认 | 5h / week quota | 支持 |
+| Xiaomi MiMo | Token Plan / API key | `https://token-plan-cn.xiaomimimo.com/anthropic` 或 `https://api.xiaomimimo.com/anthropic` | 支持，失败回退默认 | 暂无 | 支持 |
 
 当前只面向 Claude Code。Codex 支持会先留在 roadmap 里，等这个小工具本身足
 够稳定再考虑。
@@ -216,6 +221,19 @@ mm add deepseek
 DEEPSEEK_API_KEY=sk-xxx mm add deepseek --yes
 ```
 
+添加 Zhipu GLM：
+
+```sh
+GLM_API_KEY=xxx mm add glm --yes
+```
+
+添加 Xiaomi MiMo：
+
+```sh
+MIMO_API_KEY=xxx mm add mimo --mode token-plan --yes
+MIMO_API_KEY=xxx mm add mimo --mode api --yes
+```
+
 切换 Claude Code 到这个 profile：
 
 ```sh
@@ -256,6 +274,9 @@ mm export [--redact]
 mm import <file>
 ```
 
+`mm remove <profile>` 不允许删除当前 active profile；请先 `mm use <other-profile>`
+切到其他配置，再删除原来的 profile。
+
 全局常用参数：
 
 ```text
@@ -291,8 +312,13 @@ mm add deepseek --yes
     "ANTHROPIC_AUTH_TOKEN": "sk-...",
     "ANTHROPIC_MODEL": "kimi-for-coding",
     "ANTHROPIC_DEFAULT_OPUS_MODEL": "kimi-for-coding",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "kimi-for-coding",
     "ANTHROPIC_DEFAULT_SONNET_MODEL": "kimi-for-coding",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "kimi-for-coding",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "kimi-for-coding",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "kimi-for-coding",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "kimi-for-coding",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "kimi-for-coding",
     "CLAUDE_CODE_SUBAGENT_MODEL": "kimi-for-coding",
     "ENABLE_TOOL_SEARCH": "false",
     "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "262144"
@@ -350,8 +376,6 @@ MengMeng 不打算一次性接入所有 provider。每新增一个 adapter，都
 
 | 候选供应商 | 可能的接入方式 | 需要确认的问题 |
 | --- | --- | --- |
-| GLM / 智谱 | Coding Plan / API key | 是否有稳定的 Claude Code / Anthropic-compatible 入口、余额或 quota API |
-| Xiaomi MiMo | Coding Plan | token plan 的 models、quota、过期时间接口 |
 | Qwen / ModelStudio | API key | Claude Code 兼容方式、模型映射、余额接口 |
 | 火山方舟 / Doubao | API key | Anthropic-compatible 支持和模型命名 |
 | SiliconFlow | API key / relay | 余额接口、模型过滤、Claude Code 推荐映射 |
@@ -375,8 +399,8 @@ MengMeng 不打算一次性接入所有 provider。每新增一个 adapter，都
 - shell completions
 - 更清楚的模型推荐解释
 - 更稳定的 quota 展示
-- custom relay profile
-- 如果确实有人需要，再加 GLM、MiMo adapter
+- 更完整的 custom relay profile
+- GLM、MiMo 的 quota / 余额展示
 - Codex 支持，等 Claude Code 体验稳定后再评估
 
 暂时不做：
