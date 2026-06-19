@@ -146,14 +146,14 @@ mm upgrade
 
 ### Homebrew 安装
 
-当前还没有发布稳定 release，所以 Homebrew 先走 HEAD 安装：
+当前已经有 GitHub release，但 Homebrew formula 仍先走 HEAD 安装：
 
 ```sh
 brew tap jiaqianjing/mengmeng https://github.com/jiaqianjing/mengmeng
 brew install --HEAD mengmeng
 ```
 
-后面发布 release 后，目标是支持：
+后面补齐稳定 formula 后，目标是支持：
 
 ```sh
 brew install mengmeng
@@ -423,7 +423,7 @@ MengMeng 不打算一次性接入所有 provider。每新增一个 adapter，都
 
 近期可能会做：
 
-- release 版本和稳定 Homebrew formula
+- 稳定 Homebrew formula
 - shell completions
 - 更清楚的模型推荐解释
 - 更稳定的 quota 展示
