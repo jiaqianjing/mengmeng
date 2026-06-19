@@ -14,8 +14,11 @@ const {
   parseKimiBalance,
   parseDeepSeekModels,
   parseDeepSeekBalance,
+  parseSiliconFlowModels,
+  parseSiliconFlowBalance,
   recommendMapping,
   recommendDeepSeekMapping,
+  recommendSiliconFlowMapping,
   mergeSettings,
   settingsForProfile,
   listStatus,
@@ -194,6 +197,42 @@ test("parseDeepSeekBalance extracts CNY balances", () => {
   assert.equal(balance.currency, "CNY");
 });
 
+test("parseSiliconFlowModels keeps chat models", () => {
+  const models = parseSiliconFlowModels({
+    data: [
+      { id: "Pro/zai-org/GLM-5.2", object: "model", type: "text", sub_type: "chat" },
+      { id: "BAAI/bge-m3", object: "model", type: "text", sub_type: "embedding" },
+      { id: "Qwen/Qwen3-Coder", object: "model" }
+    ]
+  });
+
+  assert.deepEqual(models, [
+    { id: "Pro/zai-org/GLM-5.2", displayName: "Pro/zai-org/GLM-5.2", contextLength: 0 },
+    { id: "Qwen/Qwen3-Coder", displayName: "Qwen/Qwen3-Coder", contextLength: 0 }
+  ]);
+});
+
+test("parseSiliconFlowBalance extracts total balance", () => {
+  const balance = parseSiliconFlowBalance({
+    code: 20000,
+    message: "OK",
+    status: true,
+    data: {
+      balance: "0.88",
+      chargeBalance: "88.00",
+      totalBalance: "88.88",
+      status: "normal"
+    }
+  });
+
+  assert.equal(balance.success, true);
+  assert.equal(balance.provider, "siliconflow");
+  assert.equal(balance.available, 88.88);
+  assert.equal(balance.voucher, 0.88);
+  assert.equal(balance.cash, 88);
+  assert.equal(balance.currency, "RMB");
+  assert.equal(balance.accountStatus, "normal");
+});
 
 test("recommendMapping chooses the coding model", () => {
   const mapping = recommendMapping([
@@ -218,6 +257,18 @@ test("recommendDeepSeekMapping follows Claude Code defaults", () => {
   assert.equal(mapping.subagent, "deepseek-v4-flash");
 });
 
+test("recommendSiliconFlowMapping prefers GLM 5.2", () => {
+  const mapping = recommendSiliconFlowMapping([
+    { id: "Qwen/Qwen3-Coder", displayName: "Qwen Coder", contextLength: 1048576 },
+    { id: "Pro/zai-org/GLM-5.2", displayName: "GLM-5.2", contextLength: 262144 },
+    { id: "Pro/zai-org/GLM-5.1", displayName: "GLM-5.1", contextLength: 1048576 }
+  ]);
+
+  assert.equal(mapping.main, "Pro/zai-org/GLM-5.2");
+  assert.equal(mapping.opus, "Pro/zai-org/GLM-5.2");
+  assert.equal(mapping.haiku, "Pro/zai-org/GLM-5.2");
+});
+
 test("mergeSettings preserves unrelated settings", () => {
   const target = { theme: "dark", env: { KEEP_ME: "yes" } };
   mergeSettings(target, {
@@ -239,6 +290,7 @@ test("detectStorageCandidates always includes local and custom choices", () => {
 test("provider names support aliases and friendly suggestions", () => {
   assert.equal(normalizeProvider("moonshot"), "kimi");
   assert.equal(normalizeProvider("ds"), "deepseek");
+  assert.equal(normalizeProvider("sf"), "siliconflow");
   assert.equal(normalizeProvider("zhipu"), "glm");
   assert.equal(normalizeProvider("xiaomi-mimo"), "mimo");
   const message = formatUnsupportedProvider("kim");
@@ -716,6 +768,114 @@ test("add glm saves a static Anthropic-compatible profile", async () => {
 
     const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
     assert.equal(store.profiles[0].provider, "glm");
+    assert.equal(store.profiles[0].env.ENABLE_TOOL_SEARCH, "true");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("add siliconflow saves API profile with models and balance", async () => {
+  let requestBody = "";
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push(req.url);
+    if (req.url === "/v1/models?type=text&sub_type=chat") {
+      assert.equal(req.headers.authorization, "Bearer sf-test-key");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        object: "list",
+        data: [
+          { id: "Qwen/Qwen3-Coder", object: "model", type: "text", sub_type: "chat", context_length: 1048576 },
+          { id: "Pro/zai-org/GLM-5.1", object: "model", type: "text", sub_type: "chat", context_length: 1048576 },
+          { id: "Pro/zai-org/GLM-5.2", object: "model", type: "text", sub_type: "chat", context_length: 262144 },
+          { id: "BAAI/bge-m3", object: "model", type: "text", sub_type: "embedding" }
+        ]
+      }));
+      return;
+    }
+
+    if (req.url === "/v1/user/info") {
+      assert.equal(req.headers.authorization, "Bearer sf-test-key");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        code: 20000,
+        message: "OK",
+        status: true,
+        data: {
+          balance: "1.20",
+          chargeBalance: "8.30",
+          totalBalance: "9.50",
+          status: "normal"
+        }
+      }));
+      return;
+    }
+
+    assert.equal(req.url, "/v1/messages");
+    assert.equal(req.headers.authorization, "Bearer sf-test-key");
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      requestBody += chunk;
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        id: "msg_sf",
+        type: "message",
+        role: "assistant",
+        model: "Pro/zai-org/GLM-5.2",
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 8, output_tokens: 1 }
+      }));
+    });
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "",
+      createdAt: now,
+      updatedAt: now
+    }));
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      "bin/mm.js",
+      "--json",
+      "add",
+      "siliconflow",
+      "--yes",
+      "--base-url",
+      `http://127.0.0.1:${port}`
+    ], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json"),
+        SILICONFLOW_API_KEY: "sf-test-key"
+      }
+    });
+
+    const profile = JSON.parse(stdout);
+    assert.equal(profile.provider, "siliconflow");
+    assert.equal(profile.mode, "api");
+    assert.equal(profile.baseUrl, `http://127.0.0.1:${port}`);
+    assert.equal(profile.model.main, "Pro/zai-org/GLM-5.2");
+    assert.equal(profile.modelSource, `http://127.0.0.1:${port}/v1/models?type=text&sub_type=chat`);
+    assert.equal(profile.balanceCache.available, 9.5);
+    assert.equal(profile.statusCache.success, true);
+    assert.equal(JSON.parse(requestBody).model, "Pro/zai-org/GLM-5.2");
+    assert.deepEqual(requests, ["/v1/models?type=text&sub_type=chat", "/v1/user/info", "/v1/messages"]);
+
+    const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
+    assert.equal(store.profiles[0].provider, "siliconflow");
     assert.equal(store.profiles[0].env.ENABLE_TOOL_SEARCH, "true");
   } finally {
     await new Promise((resolve) => server.close(resolve));

@@ -70,6 +70,7 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 | Kimi | Coding Plan | `https://api.kimi.com/coding` | 支持 | 5h / week quota | 支持 |
 | Kimi | API key | `https://api.moonshot.ai/anthropic` 或 `.cn` | 支持 | 账户余额 | 支持 |
 | DeepSeek | API key | `https://api.deepseek.com/anthropic` | 支持 | 账户余额 | 支持 |
+| SiliconFlow | API key | `https://api.siliconflow.cn` | 支持，优先 GLM-5.2 | 账户余额 | 支持 |
 | Zhipu GLM | Coding Plan | `https://open.bigmodel.cn/api/anthropic` | 支持，失败回退默认 | 5h / week quota | 支持 |
 | Xiaomi MiMo | Token Plan / API key | `https://token-plan-cn.xiaomimimo.com/anthropic` 或 `https://api.xiaomimimo.com/anthropic` | 支持，失败回退默认 | 暂无 | 支持 |
 
@@ -87,6 +88,21 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 测试接口、拉模型、推荐 Claude Code 映射。
 
 ![mm add provider](docs/assets/mm-add-provider.svg)
+
+SiliconFlow 作为正式 provider 接入后，`mm add siliconflow` 会读取模型列表、查询
+账户余额，并优先推荐 GLM-5.2 作为 Claude Code 映射。
+
+![mm add siliconflow](docs/assets/mm-add-siliconflow.png)
+
+`mm list` 会展示 SiliconFlow profile 的余额和当前状态，方便切换前快速确认
+可用性。
+
+![mm list siliconflow](docs/assets/mm-list-siliconflow.png)
+
+切换到 SiliconFlow profile 后，Claude Code 会直接使用 MengMeng 写入的 provider
+配置。
+
+![mm claude show](docs/assets/mm-claude-show.png)
 
 `mm show` 用来检查单个 profile 的映射、余额和状态。`mm export` 可以导出
 完整配置，方便迁移。
@@ -219,6 +235,18 @@ mm add deepseek
 
 ```sh
 DEEPSEEK_API_KEY=sk-xxx mm add deepseek --yes
+```
+
+添加 SiliconFlow：
+
+```sh
+mm add siliconflow
+```
+
+非交互使用 SiliconFlow API：
+
+```sh
+SILICONFLOW_API_KEY=sk-xxx mm add siliconflow --yes
 ```
 
 添加 Zhipu GLM：
@@ -379,7 +407,6 @@ MengMeng 不打算一次性接入所有 provider。每新增一个 adapter，都
 | --- | --- | --- |
 | Qwen / ModelStudio | API key | Claude Code 兼容方式、模型映射、余额接口 |
 | 火山方舟 / Doubao | API key | Anthropic-compatible 支持和模型命名 |
-| SiliconFlow | API key / relay | 余额接口、模型过滤、Claude Code 推荐映射 |
 | OpenRouter | relay | 余额接口、模型别名和成本展示 |
 | 通用中转站 | Anthropic-compatible / OpenAI-compatible | 最小配置模板、连通性探测、导入导出 |
 

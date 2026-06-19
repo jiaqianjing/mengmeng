@@ -1,5 +1,5 @@
 class Mengmeng < Formula
-  desc "Tiny Claude Code provider assistant for coding-plan providers"
+  desc "Tiny Claude Code provider assistant for Claude Code providers"
   homepage "https://github.com/jiaqianjing/mengmeng"
   head "https://github.com/jiaqianjing/mengmeng.git", branch: "main"
 

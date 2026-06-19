@@ -17,6 +17,9 @@ const DEEPSEEK_API_ORIGIN = "https://api.deepseek.com";
 const DEEPSEEK_ANTHROPIC_BASE = `${DEEPSEEK_API_ORIGIN}/anthropic`;
 const DEEPSEEK_MODELS_URL = `${DEEPSEEK_API_ORIGIN}/models`;
 const DEEPSEEK_BALANCE_URL = `${DEEPSEEK_API_ORIGIN}/user/balance`;
+const SILICONFLOW_API_ORIGIN = "https://api.siliconflow.cn";
+const SILICONFLOW_MODELS_URL = `${SILICONFLOW_API_ORIGIN}/v1/models?type=text&sub_type=chat`;
+const SILICONFLOW_USER_INFO_URL = `${SILICONFLOW_API_ORIGIN}/v1/user/info`;
 const GLM_ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic";
 const MIMO_API_ANTHROPIC_BASE = "https://api.xiaomimimo.com/anthropic";
 const MIMO_TOKEN_PLAN_ANTHROPIC_BASE = "https://token-plan-cn.xiaomimimo.com/anthropic";
@@ -45,6 +48,11 @@ const SUPPORTED_PROVIDERS = [
     id: "deepseek",
     name: "DeepSeek API",
     aliases: ["deepseek-api", "ds"]
+  },
+  {
+    id: "siliconflow",
+    name: "SiliconFlow API",
+    aliases: ["silicon", "silicon-flow", "siliconcloud", "sf"]
   },
   {
     id: "glm",
@@ -407,6 +415,7 @@ async function addCommand(args, opts) {
   if (!isSupportedProvider(provider)) throw new Error(formatUnsupportedProvider(providerInput));
   if (provider === "kimi") return addKimiCommand(flags, opts);
   if (provider === "deepseek") return addDeepSeekCommand(flags, opts);
+  if (provider === "siliconflow") return addSiliconFlowCommand(flags, opts);
   if (["glm", "mimo"].includes(provider)) return addStaticAnthropicCommand(provider, flags, opts);
   throw new Error(formatUnsupportedProvider(providerInput));
 }
@@ -597,6 +606,92 @@ async function addDeepSeekCommand(flags, opts) {
   }
 }
 
+async function addSiliconFlowCommand(flags, opts) {
+  const mode = flags.mode || "api";
+  if (mode !== "api") throw new Error(`unsupported SiliconFlow mode "${mode}"; use api`);
+
+  let profileName = flags.name || "siliconflow";
+  if (isInteractive() && !flags.yes) {
+    const answer = await ask(`Profile name [${profileName}]: `);
+    if (answer.trim()) profileName = answer.trim();
+  }
+
+  let baseUrl = flags["base-url"] || SILICONFLOW_API_ORIGIN;
+  if (isInteractive() && !flags.yes) {
+    const answer = await ask(`Base URL [${baseUrl}]: `);
+    if (answer.trim()) baseUrl = answer.trim();
+  }
+  baseUrl = normalizeSiliconFlowBaseUrl(baseUrl);
+
+  const apiKey = await resolveApiKey(flags, keyDefaultsForProvider("siliconflow"));
+  console.error("Testing SiliconFlow API...");
+  const adapter = await resolveSiliconFlowAdapter(apiKey, baseUrl);
+  const models = adapter.models;
+  let mapping = flags.model ? sameModelMapping(flags.model) : recommendSiliconFlowMapping(models);
+
+  if (isInteractive() && !flags.yes) {
+    mapping = await editModelMapping(models, mapping);
+  }
+
+  let powerUser = Boolean(flags["power-user"]);
+  if (isInteractive() && !flags.yes) {
+    const answer = await ask("Enable Claude Code power-user permission settings? [y/N] ");
+    powerUser = confirmDefaultNo(answer);
+  }
+
+  let balanceCache = null;
+  try {
+    balanceCache = await fetchSiliconFlowBalance(baseUrl, apiKey);
+  } catch {
+    balanceCache = null;
+  }
+
+  console.error("Checking SiliconFlow request path...");
+  const config = requireConfig();
+  const store = readStore(config.configDir);
+  const now = new Date().toISOString();
+  const existing = store.profiles.find((p) => p.name === profileName);
+  if (existing && !flags.yes && isInteractive()) {
+    const ok = await ask(`Profile "${profileName}" already exists. Overwrite? [y/N] `);
+    if (!confirmDefaultNo(ok)) throw new UserCancelled();
+  } else if (existing && !flags.yes) {
+    throw new Error(`profile "${profileName}" already exists; rerun with --yes to overwrite`);
+  }
+
+  const profile = {
+    name: profileName,
+    provider: "siliconflow",
+    mode,
+    baseUrl,
+    apiKey,
+    model: mapping,
+    env: {
+      ENABLE_TOOL_SEARCH: "true"
+    },
+    powerUser,
+    quotaCache: null,
+    balanceCache,
+    statusCache: null,
+    apiOrigin: baseUrl,
+    modelSource: adapter.modelSource,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+  profile.statusCache = await probeProfileStatus(profile);
+  upsertProfile(store, profile);
+  writeStore(config.configDir, store);
+
+  if (opts.json) return printJSON(redactProfile(profile));
+  const color = makeColor(opts);
+  console.log(`${color.green("Saved provider:")} ${color.cyan(profileName)}`);
+  if (balanceCache?.success) console.log(formatBalance(balanceCache, opts));
+  console.log(formatProfileStatus(profile, opts));
+  if (isInteractive() && !flags.yes) {
+    const useNow = await ask(`Use ${profileName} now? [Y/n] `);
+    if (confirmDefaultYes(useNow)) await useProfile(profileName);
+  }
+}
+
 async function addStaticAnthropicCommand(provider, flags, opts) {
   const preset = await resolveStaticAnthropicPreset(provider, flags);
 
@@ -725,6 +820,18 @@ async function listCommand(args, opts) {
     if (profile.provider === "deepseek" && profile.mode === "api") {
       try {
         profile.balanceCache = await fetchDeepSeekBalance(profile.apiKey);
+      } catch (error) {
+        profile.balanceCache = {
+          success: false,
+          provider: profile.provider,
+          queriedAt: new Date().toISOString(),
+          error: error.message
+        };
+      }
+    }
+    if (profile.provider === "siliconflow" && profile.mode === "api") {
+      try {
+        profile.balanceCache = await fetchSiliconFlowBalance(profile.baseUrl, profile.apiKey);
       } catch (error) {
         profile.balanceCache = {
           success: false,
@@ -888,6 +995,7 @@ async function modelsForProfile(profile) {
     if (profile.provider === "kimi" && profile.mode === "coding-plan") return mergeModels(await fetchKimiCodingModels(profile.apiKey), mappingModels(profile.model));
     if (profile.provider === "kimi" && profile.mode === "api") return mergeModels(await fetchKimiAPIModels(profile.apiKey, kimiAPIOriginForProfile(profile)), mappingModels(profile.model));
     if (profile.provider === "deepseek") return mergeModels(await fetchDeepSeekModels(profile.apiKey), mappingModels(profile.model));
+    if (profile.provider === "siliconflow") return mergeModels(await fetchSiliconFlowModels(profile.apiKey, profile.baseUrl), mappingModels(profile.model));
     if (profile.provider === "glm" || profile.provider === "mimo") {
       const preset = await resolveStaticAnthropicPreset(profile.provider, { mode: profile.mode, yes: true });
       return (await resolveStaticAnthropicModels(preset, profile.baseUrl, profile.apiKey)).models;
@@ -950,6 +1058,7 @@ async function refreshProfileCaches(profile) {
   if (profile.provider === "glm" && profile.mode === "coding-plan") profile.quotaCache = await cacheOrError(() => fetchGlmQuota(profile.baseUrl, profile.apiKey), profile.provider);
   if (profile.provider === "kimi" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchKimiAPIBalance(kimiAPIOriginForProfile(profile), profile.apiKey), profile.provider);
   if (profile.provider === "deepseek" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchDeepSeekBalance(profile.apiKey), profile.provider);
+  if (profile.provider === "siliconflow" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchSiliconFlowBalance(profile.baseUrl, profile.apiKey), profile.provider);
   profile.statusCache = await probeProfileStatus(profile);
 }
 
@@ -1156,6 +1265,12 @@ function keyDefaultsForProvider(provider) {
       prompt: "DeepSeek API key"
     };
   }
+  if (provider === "siliconflow") {
+    return {
+      envNames: ["SILICONFLOW_API_KEY", "SILICONCLOUD_API_KEY"],
+      prompt: "SiliconFlow API key"
+    };
+  }
   if (provider === "glm") {
     return {
       envNames: ["GLM_API_KEY", "ZHIPU_API_KEY", "BIGMODEL_API_KEY"],
@@ -1279,6 +1394,15 @@ async function resolveDeepSeekAdapter(apiKey) {
   };
 }
 
+async function resolveSiliconFlowAdapter(apiKey, baseUrl = SILICONFLOW_API_ORIGIN) {
+  return {
+    baseUrl,
+    apiOrigin: baseUrl,
+    modelSource: siliconFlowModelsUrl(baseUrl),
+    models: await fetchSiliconFlowModels(apiKey, baseUrl)
+  };
+}
+
 function mergeSettings(target, generated) {
   target.env = { ...(target.env || {}), ...generated.env };
   if (generated.skipDangerousModePermissionPrompt) target.skipDangerousModePermissionPrompt = true;
@@ -1332,6 +1456,27 @@ async function fetchDeepSeekBalance(apiKey) {
   const text = await res.text();
   if (!res.ok) throw new Error(`balance request failed: HTTP ${res.status}: ${text}`);
   return parseDeepSeekBalance(JSON.parse(text));
+}
+
+async function fetchSiliconFlowModels(apiKey, baseUrl = SILICONFLOW_API_ORIGIN) {
+  const url = siliconFlowModelsUrl(baseUrl);
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`SiliconFlow models request failed: HTTP ${res.status}: ${text}`);
+  const models = parseSiliconFlowModels(JSON.parse(text));
+  if (!models.length) throw new Error("SiliconFlow models request returned no chat models");
+  return models;
+}
+
+async function fetchSiliconFlowBalance(baseUrl, apiKey) {
+  const res = await fetch(siliconFlowUserInfoUrl(baseUrl), {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`balance request failed: HTTP ${res.status}: ${text}`);
+  return parseSiliconFlowBalance(JSON.parse(text));
 }
 
 async function resolveStaticAnthropicModels(preset, baseUrl, apiKey) {
@@ -1389,6 +1534,25 @@ function parseDeepSeekModels(body) {
     }));
 }
 
+function parseSiliconFlowModels(body) {
+  return (body.data || [])
+    .filter((item) => item.id)
+    .filter((item) => isSiliconFlowChatModel(item))
+    .map((item) => ({
+      id: item.id,
+      displayName: item.display_name || item.name || item.id,
+      contextLength: number(item.context_length || item.contextWindow || item.context_window)
+    }));
+}
+
+function isSiliconFlowChatModel(item) {
+  const type = String(item.type || "").toLowerCase();
+  const subType = String(item.sub_type || item.subType || "").toLowerCase();
+  if (type && type !== "text") return false;
+  if (subType && subType !== "chat") return false;
+  return true;
+}
+
 function parseGenericModels(body) {
   return (body.data || [])
     .filter((item) => item.id)
@@ -1432,6 +1596,23 @@ function buildModelsUrlCandidates(baseUrl, override = "") {
   }
 
   return unique(candidates);
+}
+
+function normalizeSiliconFlowBaseUrl(baseUrl) {
+  const trimmed = String(baseUrl || SILICONFLOW_API_ORIGIN).trim().replace(/\/+$/, "");
+  return trimmed.endsWith("/v1") ? trimmed.slice(0, -3).replace(/\/+$/, "") : trimmed;
+}
+
+function siliconFlowModelsUrl(baseUrl = SILICONFLOW_API_ORIGIN) {
+  const normalized = normalizeSiliconFlowBaseUrl(baseUrl);
+  if (normalized === SILICONFLOW_API_ORIGIN) return SILICONFLOW_MODELS_URL;
+  return `${normalized}/v1/models?type=text&sub_type=chat`;
+}
+
+function siliconFlowUserInfoUrl(baseUrl = SILICONFLOW_API_ORIGIN) {
+  const normalized = normalizeSiliconFlowBaseUrl(baseUrl);
+  if (normalized === SILICONFLOW_API_ORIGIN) return SILICONFLOW_USER_INFO_URL;
+  return `${normalized}/v1/user/info`;
 }
 
 function stripCompatSuffix(baseUrl) {
@@ -1489,6 +1670,21 @@ function parseDeepSeekBalance(body) {
     cash: number(preferred.topped_up_balance),
     currency: preferred.currency || "RMB",
     isAvailable: body.is_available !== false
+  };
+}
+
+function parseSiliconFlowBalance(body) {
+  if (body.status === false) throw new Error(`balance request failed: ${body.message || body.code || "unknown"}`);
+  const data = body.data || {};
+  return {
+    success: true,
+    provider: "siliconflow",
+    queriedAt: new Date().toISOString(),
+    available: number(data.totalBalance ?? data.total_balance ?? data.balance),
+    voucher: number(data.balance),
+    cash: number(data.chargeBalance ?? data.charge_balance),
+    currency: data.currency || body.currency || "RMB",
+    accountStatus: data.status || ""
   };
 }
 
@@ -1763,6 +1959,23 @@ function recommendDeepSeekMapping(models) {
   };
 }
 
+function recommendSiliconFlowMapping(models) {
+  const sorted = [...models].sort((a, b) => siliconFlowModelScore(b) - siliconFlowModelScore(a));
+  const main = sorted[0]?.id || "Pro/zai-org/GLM-5.2";
+  return sameModelMapping(main);
+}
+
+function siliconFlowModelScore(model) {
+  const text = `${model.id} ${model.displayName}`.toLowerCase();
+  let score = modelScore(model);
+  if (text.includes("glm-5.2") || text.includes("glm5.2")) score += 100000;
+  else if (text.includes("glm-5.1") || text.includes("glm5.1")) score += 60000;
+  else if (text.includes("glm")) score += 30000;
+  if (text.startsWith("pro/")) score += 1000;
+  if (text.includes("coder") || text.includes("code")) score += 500;
+  return score;
+}
+
 function modelScore(model) {
   const text = `${model.id} ${model.displayName}`.toLowerCase();
   let score = Math.floor((model.contextLength || 0) / 1000);
@@ -2000,6 +2213,7 @@ function displayProvider(profile) {
   if (profile.provider === "kimi" && profile.mode === "coding-plan") return "Kimi Coding";
   if (profile.provider === "kimi" && profile.mode === "api") return "Kimi API";
   if (profile.provider === "deepseek" && profile.mode === "api") return "DeepSeek API";
+  if (profile.provider === "siliconflow" && profile.mode === "api") return "SiliconFlow API";
   return `${profile.provider} ${profile.mode}`;
 }
 
@@ -2425,8 +2639,11 @@ module.exports = {
   parseKimiBalance,
   parseDeepSeekModels,
   parseDeepSeekBalance,
+  parseSiliconFlowModels,
+  parseSiliconFlowBalance,
   recommendMapping,
   recommendDeepSeekMapping,
+  recommendSiliconFlowMapping,
   mergeSettings,
   settingsForProfile,
   listStatus,
