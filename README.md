@@ -5,7 +5,7 @@ MengMeng 是一个很小的命令行工具，用来管理 Claude Code 的 provid
 
 它现在只专注一件事：在 macOS、Linux、SSH 服务器、WSL、远程开发机这些
 终端环境里，更省心地配置和切换 Kimi Coding Plan、Kimi API、DeepSeek API、
-Zhipu GLM 和 Xiaomi MiMo。
+SiliconFlow、Zhipu GLM、Xiaomi MiMo 和 Yunwu。
 
 命令名是 `mm`。
 
@@ -52,9 +52,13 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - `mm init` 首次初始化
 - `mm add kimi` 添加 Kimi profile，支持 Kimi Coding Plan 和 Kimi API
 - `mm add deepseek` 添加 DeepSeek API profile
+- `mm add siliconflow` 添加 SiliconFlow API profile
 - `mm add glm` 添加 Zhipu GLM profile
 - `mm add mimo` 添加 Xiaomi MiMo Token Plan 或 API profile
+- `mm add yunwu` 添加 Yunwu API profile，默认映射 `claude-opus-4-8`
 - 请求 provider models API，并自动推荐 Claude Code 模型映射
+- `mm edit` 里可以刷新 Yunwu 等 provider 的模型列表
+- 交互菜单支持 `Esc` 返回上一级，长模型列表会自动窗口化滚动
 - 可选开启 Claude Code power-user permission 设置
 - `mm list` 查看 profile，显示 Coding Plan quota、API 余额、连通性状态和当前 active provider
 - `mm use` 切换当前 provider，写入前自动备份
@@ -73,9 +77,21 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 | SiliconFlow | API key | `https://api.siliconflow.cn` | 支持，优先 GLM-5.2 | 账户余额 | 支持 |
 | Zhipu GLM | Coding Plan | `https://open.bigmodel.cn/api/anthropic` | 支持，失败回退默认 | 5h / week quota | 支持 |
 | Xiaomi MiMo | Token Plan / API key | `https://token-plan-cn.xiaomimimo.com/anthropic` 或 `https://api.xiaomimimo.com/anthropic` | 支持，失败回退默认 | 暂无 | 支持 |
+| Yunwu | API key | `https://yunwu.ai` | 支持，失败回退 `claude-opus-4-8` | 令牌余额 | 支持 |
 
 当前只面向 Claude Code。Codex 支持会先留在 roadmap 里，等这个小工具本身足
 够稳定再考虑。
+
+## Release Notes
+
+### 0.2.0
+
+- 新增 Yunwu provider：`mm add yunwu`
+- Yunwu 默认 Base URL 为 `https://yunwu.ai`，默认模型映射为 `claude-opus-4-8`
+- Yunwu 支持模型发现、令牌额度查询和 Claude Code request path 探测
+- `mm edit` 现在会刷新 Yunwu 的远端模型列表
+- 交互菜单支持 `Esc` 返回上一级或退出当前菜单
+- 长模型列表改为窗口化显示，避免光标移出终端视野
 
 ## 操作截图
 
@@ -262,6 +278,21 @@ MIMO_API_KEY=xxx mm add mimo --mode token-plan --yes
 MIMO_API_KEY=xxx mm add mimo --mode api --yes
 ```
 
+添加 Yunwu：
+
+```sh
+mm add yunwu
+```
+
+非交互使用 Yunwu API：
+
+```sh
+YUNWU_API_KEY=sk-xxx mm add yunwu --yes
+```
+
+Yunwu 默认会把 main / opus / sonnet / haiku / fable / subagent 都映射到
+`claude-opus-4-8`。你也可以在交互式模型映射里修改，按 `Esc` 可以返回上一层。
+
 切换 Claude Code 到这个 profile：
 
 ```sh
@@ -327,6 +358,16 @@ mm add deepseek --key-env <ENV_NAME>
 mm add deepseek --key-stdin
 mm add deepseek --power-user
 mm add deepseek --yes
+mm add siliconflow --name <profile>
+mm add siliconflow --key-env <ENV_NAME>
+mm add siliconflow --key-stdin
+mm add siliconflow --power-user
+mm add siliconflow --yes
+mm add yunwu --name <profile>
+mm add yunwu --key-env <ENV_NAME>
+mm add yunwu --key-stdin
+mm add yunwu --power-user
+mm add yunwu --yes
 ```
 
 ## `mm use` 会写入什么

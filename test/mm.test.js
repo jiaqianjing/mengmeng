@@ -16,9 +16,15 @@ const {
   parseDeepSeekBalance,
   parseSiliconFlowModels,
   parseSiliconFlowBalance,
+  parseYunwuBalance,
   recommendMapping,
   recommendDeepSeekMapping,
   recommendSiliconFlowMapping,
+  modelChoiceOptions,
+  selectOptionHelpText,
+  selectOptionEscOption,
+  visibleOptionRange,
+  modelsForProfile,
   mergeSettings,
   settingsForProfile,
   listStatus,
@@ -42,7 +48,7 @@ const plainColor = {
 };
 
 test("application version is controlled from package and CLI constant", async () => {
-  assert.equal(APP_VERSION, "0.1.0");
+  assert.equal(APP_VERSION, "0.2.0");
   assert.equal(packageJson.version, APP_VERSION);
 
   const cwd = path.resolve(__dirname, "..");
@@ -234,6 +240,29 @@ test("parseSiliconFlowBalance extracts total balance", () => {
   assert.equal(balance.accountStatus, "normal");
 });
 
+test("parseYunwuBalance converts quota to USD balance", () => {
+  const balance = parseYunwuBalance({
+    success: true,
+    message: "",
+    data: {
+      name: "default",
+      total_available: 4750000,
+      total_granted: 5000000,
+      total_used: 250000,
+      expires_at: -1,
+      unlimited_quota: false
+    }
+  });
+
+  assert.equal(balance.success, true);
+  assert.equal(balance.provider, "yunwu");
+  assert.equal(balance.available, 9.5);
+  assert.equal(balance.voucher, 10);
+  assert.equal(balance.cash, 0.5);
+  assert.equal(balance.currency, "USD");
+  assert.equal(balance.rawQuota.available, 4750000);
+});
+
 test("recommendMapping chooses the coding model", () => {
   const mapping = recommendMapping([
     { id: "kimi-lite", displayName: "Lite", contextLength: 1000 },
@@ -269,6 +298,76 @@ test("recommendSiliconFlowMapping prefers GLM 5.2", () => {
   assert.equal(mapping.haiku, "Pro/zai-org/GLM-5.2");
 });
 
+test("model choice menu keeps current model by default and supports Esc hint", () => {
+  const options = modelChoiceOptions([
+    { id: "claude-opus-4-8", displayName: "Claude Opus 4.8" }
+  ], "default-model");
+
+  assert.equal(options[0].label, "Keep current (default-model)");
+  assert.equal(options[0].value, "default-model");
+  assert.equal(options[1].value, "claude-opus-4-8");
+  assert.match(selectOptionHelpText(options, { esc: { label: "Back", value: "default-model" } }), /Esc goes back/);
+  assert.doesNotMatch(selectOptionHelpText(), /Esc goes back/);
+});
+
+test("selectOptionEscOption maps Esc to common back/cancel/done menu exits", () => {
+  const back = [{ label: "Back", value: "back" }, { label: "Thing", value: "thing" }];
+  const cancel = [{ label: "Thing", value: "thing" }, { label: "Cancel", value: "cancel" }];
+  const done = [{ label: "Done", value: "done" }, { label: "Thing", value: "thing" }];
+  const explicit = { label: "Back", value: "current" };
+
+  assert.equal(selectOptionEscOption(back).value, "back");
+  assert.equal(selectOptionEscOption(cancel).value, "cancel");
+  assert.equal(selectOptionEscOption(done).value, "done");
+  assert.equal(selectOptionEscOption(done, { esc: explicit }).value, "current");
+  assert.match(selectOptionHelpText(cancel), /Esc goes back/);
+  assert.equal(selectOptionEscOption([{ label: "Thing", value: "thing" }]), null);
+});
+
+test("visibleOptionRange keeps selected item inside a terminal-sized window", () => {
+  assert.deepEqual(visibleOptionRange(30, 0, 10), { start: 0, end: 6 });
+  assert.deepEqual(visibleOptionRange(30, 15, 10), { start: 12, end: 18 });
+  assert.deepEqual(visibleOptionRange(30, 29, 10), { start: 24, end: 30 });
+  assert.deepEqual(visibleOptionRange(3, 2, 6), { start: 0, end: 3 });
+});
+
+test("modelsForProfile refreshes Yunwu model list", async () => {
+  const server = http.createServer((req, res) => {
+    assert.equal(req.url, "/v1/models");
+    assert.equal(req.headers.authorization, "Bearer yunwu-test-key");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      data: [
+        { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+        { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" }
+      ]
+    }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  try {
+    const models = await modelsForProfile({
+      provider: "yunwu",
+      mode: "api",
+      baseUrl: `http://127.0.0.1:${port}`,
+      apiKey: "yunwu-test-key",
+      model: {
+        main: "claude-opus-4-8",
+        opus: "claude-opus-4-8",
+        sonnet: "claude-opus-4-8",
+        haiku: "claude-opus-4-8",
+        fable: "claude-opus-4-8",
+        subagent: "claude-opus-4-8"
+      }
+    });
+
+    assert.deepEqual(models.map((model) => model.id), ["claude-opus-4-8", "claude-sonnet-4-5"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("mergeSettings preserves unrelated settings", () => {
   const target = { theme: "dark", env: { KEEP_ME: "yes" } };
   mergeSettings(target, {
@@ -293,6 +392,7 @@ test("provider names support aliases and friendly suggestions", () => {
   assert.equal(normalizeProvider("sf"), "siliconflow");
   assert.equal(normalizeProvider("zhipu"), "glm");
   assert.equal(normalizeProvider("xiaomi-mimo"), "mimo");
+  assert.equal(normalizeProvider("yunwu-ai"), "yunwu");
   const message = formatUnsupportedProvider("kim");
   assert.match(message, /Did you mean: mm add kimi/);
   assert.match(message, /Supported providers:/);
@@ -768,6 +868,117 @@ test("add glm saves a static Anthropic-compatible profile", async () => {
 
     const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
     assert.equal(store.profiles[0].provider, "glm");
+    assert.equal(store.profiles[0].env.ENABLE_TOOL_SEARCH, "true");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("add yunwu saves a static Anthropic-compatible relay profile", async () => {
+  let requestBody = "";
+  let requestedModels = false;
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push(req.url);
+    if (req.url === "/v1/models") {
+      requestedModels = true;
+      assert.equal(req.headers.authorization, "Bearer yunwu-test-key");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        data: [
+          { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          { id: "claude-sonnet-4", name: "Claude Sonnet 4" }
+        ]
+      }));
+      return;
+    }
+
+    if (req.url === "/api/usage/token/") {
+      assert.equal(req.headers.authorization, "Bearer yunwu-test-key");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          name: "test-token",
+          total_available: 4750000,
+          total_granted: 5000000,
+          total_used: 250000,
+          unlimited_quota: false,
+          expires_at: -1
+        }
+      }));
+      return;
+    }
+
+    assert.equal(req.url, "/v1/messages");
+    assert.equal(req.headers.authorization, "Bearer yunwu-test-key");
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      requestBody += chunk;
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        id: "msg_yunwu",
+        type: "message",
+        role: "assistant",
+        model: "claude-opus-4-8",
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 8, output_tokens: 1 }
+      }));
+    });
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "",
+      createdAt: now,
+      updatedAt: now
+    }));
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      "bin/mm.js",
+      "--json",
+      "add",
+      "yunwu",
+      "--yes",
+      "--base-url",
+      `http://127.0.0.1:${port}`,
+      "--model",
+      "claude-opus-4-8"
+    ], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json"),
+        YUNWU_API_KEY: "yunwu-test-key"
+      }
+    });
+
+    const profile = JSON.parse(stdout);
+    assert.equal(profile.provider, "yunwu");
+    assert.equal(profile.mode, "api");
+    assert.equal(profile.baseUrl, `http://127.0.0.1:${port}`);
+    assert.equal(profile.model.main, "claude-opus-4-8");
+    assert.equal(profile.model.opus, "claude-opus-4-8");
+    assert.equal(profile.modelSource, `http://127.0.0.1:${port}/v1/models`);
+    assert.equal(profile.balanceCache.available, 9.5);
+    assert.equal(profile.statusCache.success, true);
+    assert.equal(requestedModels, true);
+    assert.equal(JSON.parse(requestBody).model, "claude-opus-4-8");
+    assert.deepEqual(requests, ["/v1/models", "/api/usage/token/", "/v1/messages"]);
+
+    const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
+    assert.equal(store.profiles[0].provider, "yunwu");
     assert.equal(store.profiles[0].env.ENABLE_TOOL_SEARCH, "true");
   } finally {
     await new Promise((resolve) => server.close(resolve));

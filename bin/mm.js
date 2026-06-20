@@ -6,7 +6,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.2.0";
 const STORE_VERSION = 1;
 const INSTALL_SH_URL = "https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.sh";
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";
@@ -23,6 +23,8 @@ const SILICONFLOW_USER_INFO_URL = `${SILICONFLOW_API_ORIGIN}/v1/user/info`;
 const GLM_ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic";
 const MIMO_API_ANTHROPIC_BASE = "https://api.xiaomimimo.com/anthropic";
 const MIMO_TOKEN_PLAN_ANTHROPIC_BASE = "https://token-plan-cn.xiaomimimo.com/anthropic";
+const YUNWU_ANTHROPIC_BASE = "https://yunwu.ai";
+const YUNWU_QUOTA_PER_USD = 500000;
 const PROBE_PROMPT = "这是一个接口测试，请返回 \"ok\" 即可。";
 const PROBE_MAX_TOKENS = 8;
 const PROBE_TIMEOUT_MS = 20000;
@@ -63,6 +65,11 @@ const SUPPORTED_PROVIDERS = [
     id: "mimo",
     name: "Xiaomi MiMo",
     aliases: ["xiaomi", "xiaomi-mimo", "mimo-token-plan"]
+  },
+  {
+    id: "yunwu",
+    name: "Yunwu relay",
+    aliases: ["yunwu-ai", "云雾", "云雾ai"]
   }
 ];
 
@@ -416,7 +423,7 @@ async function addCommand(args, opts) {
   if (provider === "kimi") return addKimiCommand(flags, opts);
   if (provider === "deepseek") return addDeepSeekCommand(flags, opts);
   if (provider === "siliconflow") return addSiliconFlowCommand(flags, opts);
-  if (["glm", "mimo"].includes(provider)) return addStaticAnthropicCommand(provider, flags, opts);
+  if (["glm", "mimo", "yunwu"].includes(provider)) return addStaticAnthropicCommand(provider, flags, opts);
   throw new Error(formatUnsupportedProvider(providerInput));
 }
 
@@ -723,11 +730,19 @@ async function addStaticAnthropicCommand(provider, flags, opts) {
   }
 
   let quotaCache = null;
+  let balanceCache = null;
   if (provider === "glm" && preset.mode === "coding-plan") {
     try {
       quotaCache = await fetchGlmQuota(baseUrl, apiKey);
     } catch {
       quotaCache = null;
+    }
+  }
+  if (provider === "yunwu") {
+    try {
+      balanceCache = await fetchYunwuBalance(baseUrl, apiKey);
+    } catch {
+      balanceCache = null;
     }
   }
 
@@ -753,7 +768,7 @@ async function addStaticAnthropicCommand(provider, flags, opts) {
     env: preset.env,
     powerUser,
     quotaCache,
-    balanceCache: null,
+    balanceCache,
     statusCache: null,
     apiOrigin: "",
     modelSource: modelInfo.modelSource,
@@ -768,6 +783,7 @@ async function addStaticAnthropicCommand(provider, flags, opts) {
   const color = makeColor(opts);
   console.log(`${color.green("Saved provider:")} ${color.cyan(profileName)}`);
   if (quotaCache?.success) console.log(formatQuota(quotaCache, opts));
+  if (balanceCache?.success) console.log(formatBalance(balanceCache, opts));
   console.log(formatProfileStatus(profile, opts));
   if (isInteractive() && !flags.yes) {
     const useNow = await ask(`Use ${profileName} now? [Y/n] `);
@@ -832,6 +848,18 @@ async function listCommand(args, opts) {
     if (profile.provider === "siliconflow" && profile.mode === "api") {
       try {
         profile.balanceCache = await fetchSiliconFlowBalance(profile.baseUrl, profile.apiKey);
+      } catch (error) {
+        profile.balanceCache = {
+          success: false,
+          provider: profile.provider,
+          queriedAt: new Date().toISOString(),
+          error: error.message
+        };
+      }
+    }
+    if (profile.provider === "yunwu" && profile.mode === "api") {
+      try {
+        profile.balanceCache = await fetchYunwuBalance(profile.baseUrl, profile.apiKey);
       } catch (error) {
         profile.balanceCache = {
           success: false,
@@ -996,7 +1024,7 @@ async function modelsForProfile(profile) {
     if (profile.provider === "kimi" && profile.mode === "api") return mergeModels(await fetchKimiAPIModels(profile.apiKey, kimiAPIOriginForProfile(profile)), mappingModels(profile.model));
     if (profile.provider === "deepseek") return mergeModels(await fetchDeepSeekModels(profile.apiKey), mappingModels(profile.model));
     if (profile.provider === "siliconflow") return mergeModels(await fetchSiliconFlowModels(profile.apiKey, profile.baseUrl), mappingModels(profile.model));
-    if (profile.provider === "glm" || profile.provider === "mimo") {
+    if (isStaticAnthropicProvider(profile.provider)) {
       const preset = await resolveStaticAnthropicPreset(profile.provider, { mode: profile.mode, yes: true });
       return (await resolveStaticAnthropicModels(preset, profile.baseUrl, profile.apiKey)).models;
     }
@@ -1004,6 +1032,10 @@ async function modelsForProfile(profile) {
     console.log(`Model list unavailable: ${summarizeError(error.message, 120)}`);
   }
   return mappingModels(profile.model);
+}
+
+function isStaticAnthropicProvider(provider) {
+  return ["glm", "mimo", "yunwu"].includes(provider);
 }
 
 function mappingModels(mapping = {}) {
@@ -1059,6 +1091,7 @@ async function refreshProfileCaches(profile) {
   if (profile.provider === "kimi" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchKimiAPIBalance(kimiAPIOriginForProfile(profile), profile.apiKey), profile.provider);
   if (profile.provider === "deepseek" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchDeepSeekBalance(profile.apiKey), profile.provider);
   if (profile.provider === "siliconflow" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchSiliconFlowBalance(profile.baseUrl, profile.apiKey), profile.provider);
+  if (profile.provider === "yunwu" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchYunwuBalance(profile.baseUrl, profile.apiKey), profile.provider);
   profile.statusCache = await probeProfileStatus(profile);
 }
 
@@ -1283,6 +1316,12 @@ function keyDefaultsForProvider(provider) {
       prompt: "Xiaomi MiMo API key"
     };
   }
+  if (provider === "yunwu") {
+    return {
+      envNames: ["YUNWU_API_KEY"],
+      prompt: "Yunwu API key"
+    };
+  }
   throw new Error(`unknown provider "${provider}"`);
 }
 
@@ -1350,6 +1389,25 @@ async function resolveStaticAnthropicPreset(provider, flags) {
         { id: "mimo-v2.5", displayName: "MiMo V2.5", contextLength: 1048576 }
       ],
       mapping: sameModelMapping("mimo-v2.5-pro"),
+      env: {
+        ENABLE_TOOL_SEARCH: "true"
+      }
+    };
+  }
+
+  if (provider === "yunwu") {
+    return {
+      defaultName: "yunwu",
+      displayName: "Yunwu",
+      mode: "api",
+      baseUrl: YUNWU_ANTHROPIC_BASE,
+      allowBaseUrlEdit: true,
+      keyDefaults: keyDefaultsForProvider("yunwu"),
+      modelSource: "static-yunwu-preset",
+      models: [
+        { id: "claude-opus-4-8", displayName: "Claude Opus 4.8", contextLength: 0 }
+      ],
+      mapping: sameModelMapping("claude-opus-4-8"),
       env: {
         ENABLE_TOOL_SEARCH: "true"
       }
@@ -1477,6 +1535,16 @@ async function fetchSiliconFlowBalance(baseUrl, apiKey) {
   const text = await res.text();
   if (!res.ok) throw new Error(`balance request failed: HTTP ${res.status}: ${text}`);
   return parseSiliconFlowBalance(JSON.parse(text));
+}
+
+async function fetchYunwuBalance(baseUrl, apiKey) {
+  const url = `${yunwuAPIOrigin(baseUrl)}/api/usage/token/`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`balance request failed: HTTP ${res.status}: ${text}`);
+  return parseYunwuBalance(JSON.parse(text));
 }
 
 async function resolveStaticAnthropicModels(preset, baseUrl, apiKey) {
@@ -1615,6 +1683,13 @@ function siliconFlowUserInfoUrl(baseUrl = SILICONFLOW_API_ORIGIN) {
   return `${normalized}/v1/user/info`;
 }
 
+function yunwuAPIOrigin(baseUrl = YUNWU_ANTHROPIC_BASE) {
+  const trimmed = String(baseUrl || YUNWU_ANTHROPIC_BASE).trim().replace(/\/+$/, "");
+  if (!trimmed) return YUNWU_ANTHROPIC_BASE;
+  if (trimmed.endsWith("/v1")) return trimmed.slice(0, -3).replace(/\/+$/, "");
+  return stripCompatSuffix(trimmed) || trimmed;
+}
+
 function stripCompatSuffix(baseUrl) {
   for (const suffix of KNOWN_COMPAT_SUFFIXES) {
     if (baseUrl.endsWith(suffix)) return baseUrl.slice(0, -suffix.length).replace(/\/+$/, "");
@@ -1685,6 +1760,31 @@ function parseSiliconFlowBalance(body) {
     cash: number(data.chargeBalance ?? data.charge_balance),
     currency: data.currency || body.currency || "RMB",
     accountStatus: data.status || ""
+  };
+}
+
+function parseYunwuBalance(body) {
+  if (body.success === false) throw new Error(`balance request failed: ${body.message || body.error || "unknown"}`);
+  const data = body.data || {};
+  const availableQuota = number(data.total_available ?? data.remain_quota);
+  const grantedQuota = number(data.total_granted);
+  const usedQuota = number(data.total_used);
+  return {
+    success: true,
+    provider: "yunwu",
+    queriedAt: new Date().toISOString(),
+    available: availableQuota / YUNWU_QUOTA_PER_USD,
+    voucher: grantedQuota / YUNWU_QUOTA_PER_USD,
+    cash: usedQuota / YUNWU_QUOTA_PER_USD,
+    currency: "USD",
+    rawQuota: {
+      available: availableQuota,
+      granted: grantedQuota,
+      used: usedQuota
+    },
+    tokenName: data.name || "",
+    expiresAt: data.expires_at || data.expired_time || null,
+    unlimitedQuota: data.unlimited_quota === true
   };
 }
 
@@ -2022,7 +2122,13 @@ function modelSlotLabel(slot) {
 }
 
 async function chooseModel(slot, models, current) {
-  const options = [
+  const options = modelChoiceOptions(models, current);
+  const selected = await selectOption(`Select ${slot} model`, options, 0, { esc: { label: "Back", value: current } });
+  return selected.value;
+}
+
+function modelChoiceOptions(models, current) {
+  return [
     { label: `Keep current (${current})`, value: current },
     ...models.map((model) => ({
       label: model.id,
@@ -2030,8 +2136,6 @@ async function chooseModel(slot, models, current) {
       value: model.id
     }))
   ];
-  const selected = await selectOption(`Select ${slot} model`, options, 0);
-  return selected.value;
 }
 
 async function resolveApiKey(flags, defaults) {
@@ -2281,6 +2385,14 @@ function formatQuotaTier(tier, color) {
 function formatBalance(balance, opts) {
   const color = makeColor(opts);
   if (!balance.success) return `Balance: ${color.red(balance.error || "error")}`;
+  if (balance.provider === "yunwu") {
+    const parts = [
+      `Balance: ${color.green(formatCurrency(balance.available, balance.currency))} available`,
+      color.gray(`used ${formatCurrency(balance.cash, balance.currency)}; granted ${formatCurrency(balance.voucher, balance.currency)}`)
+    ];
+    if (balance.unlimitedQuota) parts.push(color.gray("unlimited quota"));
+    return parts.join("; ");
+  }
   return [
     `Balance: ${color.green(formatCurrency(balance.available, balance.currency))} available`,
     color.gray(`voucher ${formatCurrency(balance.voucher, balance.currency)}; cash ${formatCurrency(balance.cash, balance.currency)}`)
@@ -2490,7 +2602,7 @@ function findOneDrivePath() {
   return homeHit ? path.join(os.homedir(), homeHit, "MengMeng") : "";
 }
 
-async function selectOption(message, options, defaultIndex = 0) {
+async function selectOption(message, options, defaultIndex = 0, behavior = {}) {
   if (!isInteractive() || typeof process.stdin.setRawMode !== "function") {
     return options[defaultIndex];
   }
@@ -2498,6 +2610,7 @@ async function selectOption(message, options, defaultIndex = 0) {
   return new Promise((resolve, reject) => {
     const input = process.stdin;
     const output = process.stderr;
+    const escOption = selectOptionEscOption(options, behavior);
     let index = defaultIndex;
     let renderedLines = 0;
     let closed = false;
@@ -2514,29 +2627,36 @@ async function selectOption(message, options, defaultIndex = 0) {
     const render = () => {
       if (renderedLines > 0) output.write(`\u001b[${renderedLines}A`);
       const width = Math.max(60, output.columns || 80);
-      const lines = [colorText(message, "92;1")];
-      for (let i = 0; i < options.length; i++) {
+      const { start, end } = visibleOptionRange(options.length, index, output.rows || 24);
+      const lines = [
+        colorText(message, "92;1"),
+        colorText(`Showing ${start + 1}-${end} of ${options.length}`, "90")
+      ];
+      for (let i = start; i < end; i++) {
         const option = options[i];
         const selected = i === index;
         if (selected) {
           lines.push(selectedOptionLine(option, width - 1));
           continue;
         }
-        const description = option.description ? colorText(` ${option.description}`, "90") : "";
-        lines.push(`    ${colorText(option.label, "37")}${description}`);
+        lines.push(optionLine(option, width - 1));
       }
-      lines.push(colorText("Use ↑/↓, j/k, or number keys. Press Enter to confirm.", "90"));
+      lines.push(colorText(selectOptionHelpText(options, behavior), "90"));
       for (const line of lines) output.write(`\u001b[2K\r${line}\n`);
       renderedLines = lines.length;
     };
 
-    const finish = () => {
+    const finishWith = (option) => {
       cleanup();
       if (renderedLines > 0) output.write(`\u001b[${renderedLines}A`);
-      output.write(`\u001b[2K\r${colorText(message, "92;1")} ${colorText(options[index].label, "36;1")}\n`);
+      output.write(`\u001b[2K\r${colorText(message, "92;1")} ${colorText(option.label, "36;1")}\n`);
       for (let i = 1; i < renderedLines; i++) output.write("\u001b[2K\r\n");
       if (renderedLines > 1) output.write(`\u001b[${renderedLines - 1}A`);
-      resolve(options[index]);
+      resolve(option);
+    };
+
+    const finish = () => {
+      finishWith(options[index]);
     };
 
     const onData = (chunk) => {
@@ -2546,6 +2666,7 @@ async function selectOption(message, options, defaultIndex = 0) {
         reject(new UserCancelled());
         return;
       }
+      if (key === "\u001b" && escOption) return finishWith(escOption);
       if (key === "\r" || key === "\n") return finish();
       if (key === "\u001b[A" || key === "k") index = (index - 1 + options.length) % options.length;
       else if (key === "\u001b[B" || key === "j") index = (index + 1) % options.length;
@@ -2564,16 +2685,47 @@ async function selectOption(message, options, defaultIndex = 0) {
   });
 }
 
+function selectOptionHelpText(options = [], behavior = {}) {
+  const base = "Use ↑/↓, j/k, or number keys. Press Enter to confirm.";
+  if (selectOptionEscOption(options, behavior)) return `${base} Esc goes back.`;
+  return base;
+}
+
+function selectOptionEscOption(options = [], behavior = {}) {
+  if (behavior.esc) return behavior.esc;
+  return options.find((option) => option.value === "back")
+    || options.find((option) => option.value === "cancel")
+    || options.find((option) => option.value === "done")
+    || null;
+}
+
+function visibleOptionRange(total, index, terminalRows = 24) {
+  const visible = Math.min(total, Math.max(5, terminalRows - 4));
+  let start = Math.max(0, index - Math.floor(visible / 2));
+  start = Math.min(start, Math.max(0, total - visible));
+  return { start, end: Math.min(total, start + visible) };
+}
+
 function colorText(text, code) {
   return `\u001b[${code}m${text}\u001b[0m`;
+}
+
+function optionLine(option, width) {
+  const description = option.description ? ` ${option.description}` : "";
+  const text = truncatePlain(`    ${option.label}${description}`, width);
+  return colorText(text, option.description ? "37" : "37");
 }
 
 function selectedOptionLine(option, width) {
   const bg = "\u001b[48;5;17m";
   const reset = "\u001b[0m";
   const withBg = (code, text) => `${bg}\u001b[${code}m${text}${reset}${bg}`;
-  const description = option.description ? withBg("90", ` ${option.description}`) : "";
-  const line = `${bg}  ${withBg("36;1", "✦")} ${withBg("36;1", option.label)}${description}`;
+  const prefix = "  ✦ ";
+  const labelMax = Math.max(1, width - prefix.length - (option.description ? ` ${option.description}`.length : 0));
+  const label = truncatePlain(option.label, labelMax);
+  const descriptionMax = Math.max(0, width - prefix.length - label.length);
+  const description = option.description && descriptionMax > 0 ? withBg("90", truncatePlain(` ${option.description}`, descriptionMax)) : "";
+  const line = `${bg}  ${withBg("36;1", "✦")} ${withBg("36;1", label)}${description}`;
   return `${line}${" ".repeat(Math.max(0, width - stripAnsi(line).length))}${reset}`;
 }
 
@@ -2641,9 +2793,15 @@ module.exports = {
   parseDeepSeekBalance,
   parseSiliconFlowModels,
   parseSiliconFlowBalance,
+  parseYunwuBalance,
   recommendMapping,
   recommendDeepSeekMapping,
   recommendSiliconFlowMapping,
+  modelChoiceOptions,
+  selectOptionHelpText,
+  selectOptionEscOption,
+  visibleOptionRange,
+  modelsForProfile,
   mergeSettings,
   settingsForProfile,
   listStatus,
