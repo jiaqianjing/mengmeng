@@ -6,7 +6,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
 const STORE_VERSION = 1;
 const INSTALL_SH_URL = "https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.sh";
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";

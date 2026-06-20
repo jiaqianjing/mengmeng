@@ -94,10 +94,11 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 
 ## Release Notes
 
-### Unreleased
+### 0.3.0
 
 - 新增 Cocode provider：`mm add cocode`
 - Cocode 默认 Base URL 为 `https://www.cocode.icu`，复用 Yunwu 兼容的模型发现、令牌额度查询和 Claude Code request path 探测
+- README 增加 Cocode / Yunwu 邀请入口说明
 
 ### 0.2.0
 
