@@ -81,6 +81,14 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 | Yunwu | API key | `https://yunwu.ai` | 支持，失败回退 `claude-opus-4-8` | 令牌余额 | 支持 |
 | Cocode | API key | `https://www.cocode.icu` | 支持，失败回退 `claude-opus-4-8` | 令牌余额 | 支持 |
 
+> **Claude Opus 国内可用入口**
+>
+> 如果你正在找一条国内比较省心、稳定使用 Claude Opus 的途径，可以优先看看
+> [Cocode](https://www.cocode.icu/register?aff=ubgH) 或
+> [Yunwu](https://yunwu.ai/register?aff=ubgH)。通过这里的邀请链接注册后，好友
+> 前 3 次充值，邀请人可获得 10% 返现。MengMeng 已经内置了这两个 provider，
+> 注册后用 `mm add cocode` 或 `mm add yunwu` 接入即可。
+
 当前只面向 Claude Code。Codex 支持会先留在 roadmap 里，等这个小工具本身足
 够稳定再考虑。
 
