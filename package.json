@@ -2,7 +2,7 @@
   "name": "mengmeng",
   "version": "0.2.0",
   "private": true,
-  "description": "A tiny Claude Code provider assistant for Kimi, MiMo, GLM, DeepSeek, SiliconFlow, Yunwu, and custom coding-plan providers.",
+  "description": "A tiny Claude Code provider assistant for Kimi, MiMo, GLM, DeepSeek, SiliconFlow, Yunwu, Cocode, and custom coding-plan providers.",
   "bin": {
     "mm": "bin/mm.js"
   },

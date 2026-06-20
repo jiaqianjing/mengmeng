@@ -261,6 +261,17 @@ test("parseYunwuBalance converts quota to USD balance", () => {
   assert.equal(balance.cash, 0.5);
   assert.equal(balance.currency, "USD");
   assert.equal(balance.rawQuota.available, 4750000);
+
+  const cocodeBalance = parseYunwuBalance({
+    success: true,
+    data: {
+      total_available: 1000000,
+      total_granted: 1500000,
+      total_used: 500000
+    }
+  }, "cocode");
+  assert.equal(cocodeBalance.provider, "cocode");
+  assert.equal(cocodeBalance.available, 2);
 });
 
 test("recommendMapping chooses the coding model", () => {
@@ -393,6 +404,7 @@ test("provider names support aliases and friendly suggestions", () => {
   assert.equal(normalizeProvider("zhipu"), "glm");
   assert.equal(normalizeProvider("xiaomi-mimo"), "mimo");
   assert.equal(normalizeProvider("yunwu-ai"), "yunwu");
+  assert.equal(normalizeProvider("cocode-ai"), "cocode");
   const message = formatUnsupportedProvider("kim");
   assert.match(message, /Did you mean: mm add kimi/);
   assert.match(message, /Supported providers:/);
@@ -979,6 +991,114 @@ test("add yunwu saves a static Anthropic-compatible relay profile", async () => 
 
     const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
     assert.equal(store.profiles[0].provider, "yunwu");
+    assert.equal(store.profiles[0].env.ENABLE_TOOL_SEARCH, "true");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("add cocode saves a Yunwu-compatible relay profile", async () => {
+  let requestBody = "";
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    requests.push(req.url);
+    if (req.url === "/v1/models") {
+      assert.equal(req.headers.authorization, "Bearer cocode-test-key");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        data: [
+          { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          { id: "claude-sonnet-4", name: "Claude Sonnet 4" }
+        ]
+      }));
+      return;
+    }
+
+    if (req.url === "/api/usage/token/") {
+      assert.equal(req.headers.authorization, "Bearer cocode-test-key");
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          name: "cocode-token",
+          total_available: 9500000,
+          total_granted: 10000000,
+          total_used: 500000,
+          unlimited_quota: false,
+          expires_at: -1
+        }
+      }));
+      return;
+    }
+
+    assert.equal(req.url, "/v1/messages");
+    assert.equal(req.headers.authorization, "Bearer cocode-test-key");
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      requestBody += chunk;
+    });
+    req.on("end", () => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        id: "msg_cocode",
+        type: "message",
+        role: "assistant",
+        model: "claude-opus-4-8",
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 8, output_tokens: 1 }
+      }));
+    });
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "",
+      createdAt: now,
+      updatedAt: now
+    }));
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      "bin/mm.js",
+      "--json",
+      "add",
+      "cocode",
+      "--yes",
+      "--base-url",
+      `http://127.0.0.1:${port}`,
+      "--model",
+      "claude-opus-4-8"
+    ], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json"),
+        COCODE_API_KEY: "cocode-test-key"
+      }
+    });
+
+    const profile = JSON.parse(stdout);
+    assert.equal(profile.provider, "cocode");
+    assert.equal(profile.mode, "api");
+    assert.equal(profile.baseUrl, `http://127.0.0.1:${port}`);
+    assert.equal(profile.model.main, "claude-opus-4-8");
+    assert.equal(profile.modelSource, `http://127.0.0.1:${port}/v1/models`);
+    assert.equal(profile.balanceCache.provider, "cocode");
+    assert.equal(profile.balanceCache.available, 19);
+    assert.equal(profile.statusCache.success, true);
+    assert.equal(JSON.parse(requestBody).model, "claude-opus-4-8");
+    assert.deepEqual(requests, ["/v1/models", "/api/usage/token/", "/v1/messages"]);
+
+    const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
+    assert.equal(store.profiles[0].provider, "cocode");
     assert.equal(store.profiles[0].env.ENABLE_TOOL_SEARCH, "true");
   } finally {
     await new Promise((resolve) => server.close(resolve));

@@ -24,6 +24,7 @@ const GLM_ANTHROPIC_BASE = "https://open.bigmodel.cn/api/anthropic";
 const MIMO_API_ANTHROPIC_BASE = "https://api.xiaomimimo.com/anthropic";
 const MIMO_TOKEN_PLAN_ANTHROPIC_BASE = "https://token-plan-cn.xiaomimimo.com/anthropic";
 const YUNWU_ANTHROPIC_BASE = "https://yunwu.ai";
+const COCODE_ANTHROPIC_BASE = "https://www.cocode.icu";
 const YUNWU_QUOTA_PER_USD = 500000;
 const PROBE_PROMPT = "这是一个接口测试，请返回 \"ok\" 即可。";
 const PROBE_MAX_TOKENS = 8;
@@ -70,6 +71,11 @@ const SUPPORTED_PROVIDERS = [
     id: "yunwu",
     name: "Yunwu relay",
     aliases: ["yunwu-ai", "云雾", "云雾ai"]
+  },
+  {
+    id: "cocode",
+    name: "Cocode relay",
+    aliases: ["cocode-ai", "cocode-icu", "cocode.icu", "可可码"]
   }
 ];
 
@@ -423,7 +429,7 @@ async function addCommand(args, opts) {
   if (provider === "kimi") return addKimiCommand(flags, opts);
   if (provider === "deepseek") return addDeepSeekCommand(flags, opts);
   if (provider === "siliconflow") return addSiliconFlowCommand(flags, opts);
-  if (["glm", "mimo", "yunwu"].includes(provider)) return addStaticAnthropicCommand(provider, flags, opts);
+  if (["glm", "mimo", "yunwu", "cocode"].includes(provider)) return addStaticAnthropicCommand(provider, flags, opts);
   throw new Error(formatUnsupportedProvider(providerInput));
 }
 
@@ -738,9 +744,9 @@ async function addStaticAnthropicCommand(provider, flags, opts) {
       quotaCache = null;
     }
   }
-  if (provider === "yunwu") {
+  if (isYunwuCompatibleProvider(provider)) {
     try {
-      balanceCache = await fetchYunwuBalance(baseUrl, apiKey);
+      balanceCache = await fetchYunwuBalance(baseUrl, apiKey, provider);
     } catch {
       balanceCache = null;
     }
@@ -857,9 +863,9 @@ async function listCommand(args, opts) {
         };
       }
     }
-    if (profile.provider === "yunwu" && profile.mode === "api") {
+    if (isYunwuCompatibleProvider(profile.provider) && profile.mode === "api") {
       try {
-        profile.balanceCache = await fetchYunwuBalance(profile.baseUrl, profile.apiKey);
+        profile.balanceCache = await fetchYunwuBalance(profile.baseUrl, profile.apiKey, profile.provider);
       } catch (error) {
         profile.balanceCache = {
           success: false,
@@ -1035,7 +1041,11 @@ async function modelsForProfile(profile) {
 }
 
 function isStaticAnthropicProvider(provider) {
-  return ["glm", "mimo", "yunwu"].includes(provider);
+  return ["glm", "mimo", "yunwu", "cocode"].includes(provider);
+}
+
+function isYunwuCompatibleProvider(provider) {
+  return ["yunwu", "cocode"].includes(provider);
 }
 
 function mappingModels(mapping = {}) {
@@ -1091,7 +1101,7 @@ async function refreshProfileCaches(profile) {
   if (profile.provider === "kimi" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchKimiAPIBalance(kimiAPIOriginForProfile(profile), profile.apiKey), profile.provider);
   if (profile.provider === "deepseek" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchDeepSeekBalance(profile.apiKey), profile.provider);
   if (profile.provider === "siliconflow" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchSiliconFlowBalance(profile.baseUrl, profile.apiKey), profile.provider);
-  if (profile.provider === "yunwu" && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchYunwuBalance(profile.baseUrl, profile.apiKey), profile.provider);
+  if (isYunwuCompatibleProvider(profile.provider) && profile.mode === "api") profile.balanceCache = await cacheOrError(() => fetchYunwuBalance(profile.baseUrl, profile.apiKey, profile.provider), profile.provider);
   profile.statusCache = await probeProfileStatus(profile);
 }
 
@@ -1322,6 +1332,12 @@ function keyDefaultsForProvider(provider) {
       prompt: "Yunwu API key"
     };
   }
+  if (provider === "cocode") {
+    return {
+      envNames: ["COCODE_API_KEY"],
+      prompt: "Cocode API key"
+    };
+  }
   throw new Error(`unknown provider "${provider}"`);
 }
 
@@ -1396,25 +1412,33 @@ async function resolveStaticAnthropicPreset(provider, flags) {
   }
 
   if (provider === "yunwu") {
-    return {
-      defaultName: "yunwu",
-      displayName: "Yunwu",
-      mode: "api",
-      baseUrl: YUNWU_ANTHROPIC_BASE,
-      allowBaseUrlEdit: true,
-      keyDefaults: keyDefaultsForProvider("yunwu"),
-      modelSource: "static-yunwu-preset",
-      models: [
-        { id: "claude-opus-4-8", displayName: "Claude Opus 4.8", contextLength: 0 }
-      ],
-      mapping: sameModelMapping("claude-opus-4-8"),
-      env: {
-        ENABLE_TOOL_SEARCH: "true"
-      }
-    };
+    return relayAnthropicPreset("yunwu", "Yunwu", YUNWU_ANTHROPIC_BASE);
+  }
+
+  if (provider === "cocode") {
+    return relayAnthropicPreset("cocode", "Cocode", COCODE_ANTHROPIC_BASE);
   }
 
   throw new Error(`unknown provider "${provider}"`);
+}
+
+function relayAnthropicPreset(provider, displayName, baseUrl) {
+  return {
+    defaultName: provider,
+    displayName,
+    mode: "api",
+    baseUrl,
+    allowBaseUrlEdit: true,
+    keyDefaults: keyDefaultsForProvider(provider),
+    modelSource: `static-${provider}-preset`,
+    models: [
+      { id: "claude-opus-4-8", displayName: "Claude Opus 4.8", contextLength: 0 }
+    ],
+    mapping: sameModelMapping("claude-opus-4-8"),
+    env: {
+      ENABLE_TOOL_SEARCH: "true"
+    }
+  };
 }
 
 async function resolveKimiAdapter(mode, apiKey) {
@@ -1537,14 +1561,14 @@ async function fetchSiliconFlowBalance(baseUrl, apiKey) {
   return parseSiliconFlowBalance(JSON.parse(text));
 }
 
-async function fetchYunwuBalance(baseUrl, apiKey) {
+async function fetchYunwuBalance(baseUrl, apiKey, provider = "yunwu") {
   const url = `${yunwuAPIOrigin(baseUrl)}/api/usage/token/`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`balance request failed: HTTP ${res.status}: ${text}`);
-  return parseYunwuBalance(JSON.parse(text));
+  return parseYunwuBalance(JSON.parse(text), provider);
 }
 
 async function resolveStaticAnthropicModels(preset, baseUrl, apiKey) {
@@ -1763,7 +1787,7 @@ function parseSiliconFlowBalance(body) {
   };
 }
 
-function parseYunwuBalance(body) {
+function parseYunwuBalance(body, provider = "yunwu") {
   if (body.success === false) throw new Error(`balance request failed: ${body.message || body.error || "unknown"}`);
   const data = body.data || {};
   const availableQuota = number(data.total_available ?? data.remain_quota);
@@ -1771,7 +1795,7 @@ function parseYunwuBalance(body) {
   const usedQuota = number(data.total_used);
   return {
     success: true,
-    provider: "yunwu",
+    provider,
     queriedAt: new Date().toISOString(),
     available: availableQuota / YUNWU_QUOTA_PER_USD,
     voucher: grantedQuota / YUNWU_QUOTA_PER_USD,
@@ -2318,6 +2342,8 @@ function displayProvider(profile) {
   if (profile.provider === "kimi" && profile.mode === "api") return "Kimi API";
   if (profile.provider === "deepseek" && profile.mode === "api") return "DeepSeek API";
   if (profile.provider === "siliconflow" && profile.mode === "api") return "SiliconFlow API";
+  if (profile.provider === "yunwu" && profile.mode === "api") return "Yunwu API";
+  if (profile.provider === "cocode" && profile.mode === "api") return "Cocode API";
   return `${profile.provider} ${profile.mode}`;
 }
 
@@ -2385,7 +2411,7 @@ function formatQuotaTier(tier, color) {
 function formatBalance(balance, opts) {
   const color = makeColor(opts);
   if (!balance.success) return `Balance: ${color.red(balance.error || "error")}`;
-  if (balance.provider === "yunwu") {
+  if (isYunwuCompatibleProvider(balance.provider)) {
     const parts = [
       `Balance: ${color.green(formatCurrency(balance.available, balance.currency))} available`,
       color.gray(`used ${formatCurrency(balance.cash, balance.currency)}; granted ${formatCurrency(balance.voucher, balance.currency)}`)

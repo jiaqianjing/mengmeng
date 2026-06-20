@@ -5,7 +5,7 @@ MengMeng 是一个很小的命令行工具，用来管理 Claude Code 的 provid
 
 它现在只专注一件事：在 macOS、Linux、SSH 服务器、WSL、远程开发机这些
 终端环境里，更省心地配置和切换 Kimi Coding Plan、Kimi API、DeepSeek API、
-SiliconFlow、Zhipu GLM、Xiaomi MiMo 和 Yunwu。
+SiliconFlow、Zhipu GLM、Xiaomi MiMo、Yunwu 和 Cocode。
 
 命令名是 `mm`。
 
@@ -56,8 +56,9 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - `mm add glm` 添加 Zhipu GLM profile
 - `mm add mimo` 添加 Xiaomi MiMo Token Plan 或 API profile
 - `mm add yunwu` 添加 Yunwu API profile，默认映射 `claude-opus-4-8`
+- `mm add cocode` 添加 Cocode API profile，默认映射 `claude-opus-4-8`
 - 请求 provider models API，并自动推荐 Claude Code 模型映射
-- `mm edit` 里可以刷新 Yunwu 等 provider 的模型列表
+- `mm edit` 里可以刷新 Yunwu / Cocode 等 provider 的模型列表
 - 交互菜单支持 `Esc` 返回上一级，长模型列表会自动窗口化滚动
 - 可选开启 Claude Code power-user permission 设置
 - `mm list` 查看 profile，显示 Coding Plan quota、API 余额、连通性状态和当前 active provider
@@ -78,11 +79,17 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 | Zhipu GLM | Coding Plan | `https://open.bigmodel.cn/api/anthropic` | 支持，失败回退默认 | 5h / week quota | 支持 |
 | Xiaomi MiMo | Token Plan / API key | `https://token-plan-cn.xiaomimimo.com/anthropic` 或 `https://api.xiaomimimo.com/anthropic` | 支持，失败回退默认 | 暂无 | 支持 |
 | Yunwu | API key | `https://yunwu.ai` | 支持，失败回退 `claude-opus-4-8` | 令牌余额 | 支持 |
+| Cocode | API key | `https://www.cocode.icu` | 支持，失败回退 `claude-opus-4-8` | 令牌余额 | 支持 |
 
 当前只面向 Claude Code。Codex 支持会先留在 roadmap 里，等这个小工具本身足
 够稳定再考虑。
 
 ## Release Notes
+
+### Unreleased
+
+- 新增 Cocode provider：`mm add cocode`
+- Cocode 默认 Base URL 为 `https://www.cocode.icu`，复用 Yunwu 兼容的模型发现、令牌额度查询和 Claude Code request path 探测
 
 ### 0.2.0
 
@@ -293,6 +300,21 @@ YUNWU_API_KEY=sk-xxx mm add yunwu --yes
 Yunwu 默认会把 main / opus / sonnet / haiku / fable / subagent 都映射到
 `claude-opus-4-8`。你也可以在交互式模型映射里修改，按 `Esc` 可以返回上一层。
 
+添加 Cocode：
+
+```sh
+mm add cocode
+```
+
+非交互使用 Cocode API：
+
+```sh
+COCODE_API_KEY=sk-xxx mm add cocode --yes
+```
+
+Cocode 默认 Base URL 为 `https://www.cocode.icu`，模型映射和余额查询方式与
+Yunwu 兼容。
+
 切换 Claude Code 到这个 profile：
 
 ```sh
@@ -368,6 +390,11 @@ mm add yunwu --key-env <ENV_NAME>
 mm add yunwu --key-stdin
 mm add yunwu --power-user
 mm add yunwu --yes
+mm add cocode --name <profile>
+mm add cocode --key-env <ENV_NAME>
+mm add cocode --key-stdin
+mm add cocode --power-user
+mm add cocode --yes
 ```
 
 ## `mm use` 会写入什么
