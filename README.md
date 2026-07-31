@@ -94,7 +94,7 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 
 ## Release Notes
 
-### Unreleased
+### 0.3.1
 
 - Cocode 默认主模型升级为 `claude-opus-5`
 - Cocode 的 Fable 模型槽位默认映射到 `claude-fable-5`
