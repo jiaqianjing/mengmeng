@@ -21,6 +21,7 @@ const {
   recommendDeepSeekMapping,
   recommendSiliconFlowMapping,
   modelChoiceOptions,
+  modelPresetUpdate,
   selectOptionHelpText,
   selectOptionEscOption,
   visibleOptionRange,
@@ -48,7 +49,7 @@ const plainColor = {
 };
 
 test("application version is controlled from package and CLI constant", async () => {
-  assert.equal(APP_VERSION, "0.3.1");
+  assert.equal(APP_VERSION, "0.3.2");
   assert.equal(packageJson.version, APP_VERSION);
 
   const cwd = path.resolve(__dirname, "..");
@@ -319,6 +320,34 @@ test("model choice menu keeps current model by default and supports Esc hint", (
   assert.equal(options[1].value, "claude-opus-4-8");
   assert.match(selectOptionHelpText(options, { esc: { label: "Back", value: "default-model" } }), /Esc goes back/);
   assert.doesNotMatch(selectOptionHelpText(), /Esc goes back/);
+});
+
+test("modelPresetUpdate only flags the legacy Cocode default mapping", () => {
+  const legacy = {
+    provider: "cocode",
+    mode: "api",
+    model: {
+      main: "claude-opus-4-8",
+      opus: "claude-opus-4-8",
+      sonnet: "claude-opus-4-8",
+      haiku: "claude-opus-4-8",
+      fable: "claude-opus-4-8",
+      subagent: "claude-opus-4-8"
+    }
+  };
+  const update = modelPresetUpdate(legacy);
+  assert.equal(update.version, 2);
+  assert.equal(update.mapping.main, "claude-opus-5");
+  assert.equal(update.mapping.fable, "claude-fable-5");
+
+  assert.equal(modelPresetUpdate({
+    ...legacy,
+    model: { ...legacy.model, haiku: "custom-fast-model" }
+  }), null);
+  assert.equal(modelPresetUpdate({
+    ...legacy,
+    presetVersion: 2
+  }), null);
 });
 
 test("selectOptionEscOption maps Esc to common back/cancel/done menu exits", () => {
@@ -679,6 +708,83 @@ test("list probes provider status by default", async () => {
     const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
     assert.equal(store.profiles[0].statusCache.success, true);
     assert.equal(store.profiles[0].balanceCache.available, 49.58894);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("list highlights legacy Cocode profiles with an apply-defaults command", async () => {
+  const server = http.createServer((req, res) => {
+    if (req.url === "/api/usage/token/") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        success: true,
+        data: {
+          name: "test-token",
+          total_available: 500000,
+          total_granted: 500000,
+          total_used: 0
+        }
+      }));
+      return;
+    }
+    assert.equal(req.url, "/v1/messages");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      model: "claude-opus-4-8",
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 8, output_tokens: 1 }
+    }));
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const oldModel = "claude-opus-4-8";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "",
+      createdAt: "2026-06-14T00:00:00Z",
+      updatedAt: "2026-06-14T00:00:00Z"
+    }));
+    fs.writeFileSync(path.join(temp, "profiles.json"), JSON.stringify({
+      version: 1,
+      profiles: [{
+        name: "cocode",
+        provider: "cocode",
+        mode: "api",
+        baseUrl: `http://127.0.0.1:${port}`,
+        apiKey: "cocode-test-key",
+        model: {
+          main: oldModel,
+          opus: oldModel,
+          sonnet: oldModel,
+          haiku: oldModel,
+          fable: oldModel,
+          subagent: oldModel
+        },
+        env: { ENABLE_TOOL_SEARCH: "true" }
+      }]
+    }));
+
+    const { stdout } = await execFileAsync(process.execPath, ["bin/mm.js", "--no-color", "list"], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json")
+      }
+    });
+
+    assert.match(stdout, /model update available/);
+    assert.match(stdout, /mm edit cocode --apply-defaults --yes/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(temp, { recursive: true, force: true });
@@ -1093,6 +1199,7 @@ test("add cocode saves a Yunwu-compatible relay profile", async () => {
     assert.equal(profile.model.haiku, "claude-opus-5");
     assert.equal(profile.model.fable, "claude-fable-5");
     assert.equal(profile.model.subagent, "claude-opus-5");
+    assert.equal(profile.presetVersion, 2);
     assert.equal(profile.modelSource, `http://127.0.0.1:${port}/v1/models`);
     assert.equal(profile.balanceCache.provider, "cocode");
     assert.equal(profile.balanceCache.available, 19);
@@ -1295,6 +1402,76 @@ test("edit refuses non-interactive use", async () => {
         return true;
       }
     );
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("edit applies latest Cocode defaults non-interactively and rewrites active settings", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "cocode",
+      createdAt: now,
+      updatedAt: now
+    }));
+    fs.writeFileSync(path.join(temp, "profiles.json"), JSON.stringify({
+      version: 1,
+      profiles: [{
+        name: "cocode",
+        provider: "cocode",
+        mode: "api",
+        baseUrl: "https://www.cocode.icu",
+        apiKey: "cocode-test-key",
+        model: {
+          main: "claude-opus-4-8",
+          opus: "claude-opus-4-8",
+          sonnet: "claude-opus-4-8",
+          haiku: "claude-opus-4-8",
+          fable: "claude-opus-4-8",
+          subagent: "claude-opus-4-8"
+        },
+        env: { ENABLE_TOOL_SEARCH: "true" },
+        statusCache: { success: true, model: "claude-opus-4-8" }
+      }]
+    }));
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      "bin/mm.js",
+      "--json",
+      "edit",
+      "cocode",
+      "--apply-defaults",
+      "--yes"
+    ], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json")
+      }
+    });
+
+    const result = JSON.parse(stdout);
+    assert.equal(result.success, true);
+    assert.equal(result.appliedToClaudeCode, true);
+    assert.equal(result.profile.model.main, "claude-opus-5");
+    assert.equal(result.profile.model.fable, "claude-fable-5");
+    assert.equal(result.profile.presetVersion, 2);
+
+    const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
+    assert.equal(store.profiles[0].model.main, "claude-opus-5");
+    assert.equal(store.profiles[0].model.fable, "claude-fable-5");
+    assert.equal(store.profiles[0].presetVersion, 2);
+    assert.equal(store.profiles[0].statusCache, null);
+
+    const settings = JSON.parse(fs.readFileSync(path.join(temp, "settings.json"), "utf8"));
+    assert.equal(settings.env.ANTHROPIC_MODEL, "claude-opus-5");
+    assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "claude-fable-5");
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

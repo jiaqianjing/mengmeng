@@ -94,6 +94,13 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 
 ## Release Notes
 
+### 0.3.2
+
+- `mm list` 会提示仍在使用 Cocode 旧版默认映射的 profile
+- `mm edit cocode` 增加一键应用最新推荐模型映射
+- 新增 `mm edit cocode --apply-defaults --yes` 非交互升级命令；active profile 会同步重写 Claude Code 设置
+- Cocode profile 保存模型预设版本，自定义映射不会被自动覆盖
+
 ### 0.3.1
 
 - Cocode 默认主模型升级为 `claude-opus-5`
@@ -350,6 +357,9 @@ mm doctor
 `max_tokens` 为 8。Kimi Coding Plan 的 quota 和 Kimi API 的账户余额也会在
 每次 `mm list` 时同步。余额接口没有返回币种时，MengMeng 默认按 RMB 显示。
 如果 Claude Code messages 探测失败，`STATUS` 会直接显示精简后的接口错误。
+如果 Cocode profile 仍完整使用旧版 `claude-opus-4-8` 默认映射，列表会显示
+`model update available` 和对应的一键升级命令。自定义过任一模型槽位的
+profile 不会被自动标记或覆盖。
 
 ## 命令
 
@@ -363,6 +373,7 @@ mm list
 mm current
 mm show <profile>
 mm edit <profile>
+mm edit <profile> --apply-defaults --yes
 mm use <profile>
 mm doctor
 mm remove <profile>
@@ -410,7 +421,12 @@ mm add cocode --key-env <ENV_NAME>
 mm add cocode --key-stdin
 mm add cocode --power-user
 mm add cocode --yes
+mm edit cocode --apply-defaults --yes
 ```
+
+交互运行 `mm edit cocode` 时，可以选择 `Apply latest recommended mapping`
+预览并一次性应用最新 Cocode 模型映射。非交互命令会直接应用推荐值；如果该
+profile 当前处于 active 状态，还会同步重写 Claude Code 设置。
 
 ## `mm use` 会写入什么
 

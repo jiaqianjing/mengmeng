@@ -6,7 +6,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-const APP_VERSION = "0.3.1";
+const APP_VERSION = "0.3.2";
 const STORE_VERSION = 1;
 const INSTALL_SH_URL = "https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.sh";
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";
@@ -25,6 +25,7 @@ const MIMO_API_ANTHROPIC_BASE = "https://api.xiaomimimo.com/anthropic";
 const MIMO_TOKEN_PLAN_ANTHROPIC_BASE = "https://token-plan-cn.xiaomimimo.com/anthropic";
 const YUNWU_ANTHROPIC_BASE = "https://yunwu.ai";
 const COCODE_ANTHROPIC_BASE = "https://www.cocode.icu";
+const COCODE_PRESET_VERSION = 2;
 const YUNWU_QUOTA_PER_USD = 500000;
 const PROBE_PROMPT = "这是一个接口测试，请返回 \"ok\" 即可。";
 const PROBE_MAX_TOKENS = 8;
@@ -168,6 +169,7 @@ ${color.cyan("Usage:")}
   ${color.gray("mm current")}
   ${color.gray("mm show <profile>")}
   ${color.gray("mm edit <profile>")}
+  ${color.gray("mm edit <profile> --apply-defaults --yes")}
   ${color.gray("mm use <profile>")}
   ${color.gray("mm doctor")}
   ${color.gray("mm remove <profile>")}
@@ -771,6 +773,7 @@ async function addStaticAnthropicCommand(provider, flags, opts) {
     baseUrl,
     apiKey,
     model: mapping,
+    ...(preset.presetVersion ? { presetVersion: preset.presetVersion } : {}),
     env: preset.env,
     powerUser,
     quotaCache,
@@ -901,14 +904,25 @@ async function listCommand(args, opts) {
     const name = profile.name;
     const provider = isActive ? color.bold(displayProvider(profile)) : displayProvider(profile);
     const { limit, status } = listStatus(profile, color);
+    const update = modelPresetUpdate(profile);
+    const displayedStatus = update
+      ? [status, color.yellow("model update available")].filter(Boolean).join("  ")
+      : status;
     console.log([
       pad(active, 4),
       pad(name, 18),
       pad(provider, 18),
       pad(color.gray(truncate(profile.model.main, 20)), 20),
       pad(truncate(limit, 30), 30),
-      status
+      displayedStatus
     ].join(" "));
+  }
+  const modelUpdates = store.profiles.filter((profile) => modelPresetUpdate(profile));
+  if (modelUpdates.length) {
+    console.log("");
+    for (const profile of modelUpdates) {
+      console.log(color.yellow(`Update available: ${profile.name} → mm edit ${profile.name} --apply-defaults --yes`));
+    }
   }
 }
 
@@ -940,8 +954,10 @@ function printProfileDetails(profile, opts) {
 }
 
 async function editCommand(args, opts) {
-  const name = args[0];
-  if (!name) throw new Error("usage: mm edit <profile>");
+  const { flags, rest } = parseFlags(args);
+  const name = rest[0];
+  if (!name || rest.length > 1) throw new Error("usage: mm edit <profile> [--apply-defaults --yes]");
+  if (flags["apply-defaults"]) return applyProfileDefaults(name, flags, opts);
   if (opts.json || !isInteractive()) throw new Error("mm edit is interactive; use `mm show --json <profile>` and `mm import` for scripted changes");
 
   const config = requireConfig();
@@ -974,6 +990,17 @@ async function editCommand(args, opts) {
     } else if (selected.value === "mapping") {
       profile.model = await editModelMapping(await modelsForProfile(profile), normalizeProfileMapping(profile.model));
       changed = true;
+    } else if (selected.value === "defaults") {
+      const preset = modelPresetForProfile(profile);
+      console.log("");
+      console.log(color.green(`Recommended ${preset.displayName} mapping:`));
+      printMapping(preset.mapping, color);
+      const answer = await ask("Apply this mapping? [y/N] ");
+      if (confirmDefaultNo(answer)) {
+        profile.model = cloneJSON(preset.mapping);
+        profile.presetVersion = preset.version;
+        changed = true;
+      }
     } else if (selected.value === "env") {
       changed = await editProfileEnv(profile) || changed;
     } else if (selected.value === "powerUser") {
@@ -1007,8 +1034,15 @@ async function editCommand(args, opts) {
 }
 
 function editProfileOptions(profile) {
+  const preset = modelPresetForProfile(profile);
+  const presetOption = preset ? [{
+    label: "Apply latest recommended mapping",
+    description: modelPresetUpdate(profile) ? `${preset.mapping.main}; Fable ${preset.mapping.fable}` : `already on preset v${preset.version}`,
+    value: "defaults"
+  }] : [];
   return [
     { label: "Done", description: "save changes", value: "done" },
+    ...presetOption,
     { label: "API key", description: maskSecret(profile.apiKey), value: "apiKey" },
     { label: "Base URL", description: profile.baseUrl || "", value: "baseUrl" },
     { label: "Model mapping", description: profile.model?.main || "", value: "mapping" },
@@ -1017,6 +1051,49 @@ function editProfileOptions(profile) {
     { label: "Refresh status", description: "probe and sync quota/balance", value: "refresh" },
     { label: "Cancel", description: "discard changes", value: "cancel" }
   ];
+}
+
+async function applyProfileDefaults(name, flags, opts) {
+  if (!flags.yes && !isInteractive()) {
+    throw new Error("non-interactive default mapping update requires --yes");
+  }
+
+  const config = requireConfig();
+  const store = readStore(config.configDir);
+  const index = store.profiles.findIndex((profile) => profile.name === name);
+  if (index < 0) throw new Error(`profile "${name}" not found`);
+  const profile = cloneJSON(store.profiles[index]);
+  const preset = modelPresetForProfile(profile);
+  if (!preset) throw new Error(`profile "${name}" does not have a managed model preset`);
+
+  if (!flags.yes) {
+    const color = makeColor(opts);
+    console.log(`${color.green(`Recommended ${preset.displayName} mapping:`)}`);
+    printMapping(preset.mapping, color);
+    const answer = await ask("Apply this mapping? [y/N] ");
+    if (!confirmDefaultNo(answer)) throw new UserCancelled();
+  }
+
+  profile.model = cloneJSON(preset.mapping);
+  profile.presetVersion = preset.version;
+  profile.statusCache = null;
+  profile.updatedAt = new Date().toISOString();
+  store.profiles[index] = profile;
+  writeStore(config.configDir, store);
+
+  const appliedToClaudeCode = config.current === profile.name;
+  if (appliedToClaudeCode) await useProfile(profile.name);
+
+  if (opts.json) {
+    return printJSON({
+      success: true,
+      profile: redactProfile(profile),
+      appliedToClaudeCode
+    });
+  }
+  const color = makeColor(opts);
+  console.log(`${color.green("Applied recommended mapping:")} ${color.cyan(profile.name)}`);
+  if (appliedToClaudeCode) console.log(color.green("Rewrote active Claude Code settings."));
 }
 
 async function askSecretValue(label, current = "") {
@@ -1417,18 +1494,12 @@ async function resolveStaticAnthropicPreset(provider, flags) {
 
   if (provider === "cocode") {
     return relayAnthropicPreset("cocode", "Cocode", COCODE_ANTHROPIC_BASE, {
+      presetVersion: COCODE_PRESET_VERSION,
       models: [
         { id: "claude-opus-5", displayName: "Claude Opus 5", contextLength: 0 },
         { id: "claude-fable-5", displayName: "Claude Fable 5", contextLength: 0 }
       ],
-      mapping: {
-        main: "claude-opus-5",
-        opus: "claude-opus-5",
-        sonnet: "claude-opus-5",
-        haiku: "claude-opus-5",
-        fable: "claude-fable-5",
-        subagent: "claude-opus-5"
-      }
+      mapping: cocodeRecommendedMapping()
     });
   }
 
@@ -1443,6 +1514,7 @@ function relayAnthropicPreset(provider, displayName, baseUrl, overrides = {}) {
     baseUrl,
     allowBaseUrlEdit: true,
     keyDefaults: keyDefaultsForProvider(provider),
+    ...(overrides.presetVersion ? { presetVersion: overrides.presetVersion } : {}),
     modelSource: `static-${provider}-preset`,
     models: overrides.models || [
       { id: "claude-opus-4-8", displayName: "Claude Opus 4.8", contextLength: 0 }
@@ -2080,6 +2152,42 @@ function recommendMapping(models) {
 
 function sameModelMapping(model) {
   return { main: model, opus: model, sonnet: model, haiku: model, fable: model, subagent: model };
+}
+
+function cocodeRecommendedMapping() {
+  return {
+    main: "claude-opus-5",
+    opus: "claude-opus-5",
+    sonnet: "claude-opus-5",
+    haiku: "claude-opus-5",
+    fable: "claude-fable-5",
+    subagent: "claude-opus-5"
+  };
+}
+
+function modelPresetForProfile(profile = {}) {
+  if (profile.provider !== "cocode" || profile.mode !== "api") return null;
+  return {
+    displayName: "Cocode",
+    version: COCODE_PRESET_VERSION,
+    mapping: cocodeRecommendedMapping()
+  };
+}
+
+function modelPresetUpdate(profile = {}) {
+  const preset = modelPresetForProfile(profile);
+  if (!preset) return null;
+  if (Number(profile.presetVersion || 0) >= preset.version) return null;
+  const current = normalizeProfileMapping(profile.model);
+  if (modelMappingsEqual(current, preset.mapping)) return null;
+  const legacyDefault = sameModelMapping("claude-opus-4-8");
+  return modelMappingsEqual(current, legacyDefault) ? preset : null;
+}
+
+function modelMappingsEqual(left, right) {
+  const a = normalizeProfileMapping(left);
+  const b = normalizeProfileMapping(right);
+  return ["main", "opus", "sonnet", "haiku", "fable", "subagent"].every((slot) => a[slot] === b[slot]);
 }
 
 function recommendDeepSeekMapping(models) {
@@ -2837,6 +2945,7 @@ module.exports = {
   recommendDeepSeekMapping,
   recommendSiliconFlowMapping,
   modelChoiceOptions,
+  modelPresetUpdate,
   selectOptionHelpText,
   selectOptionEscOption,
   visibleOptionRange,
