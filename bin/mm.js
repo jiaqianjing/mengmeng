@@ -1416,13 +1416,26 @@ async function resolveStaticAnthropicPreset(provider, flags) {
   }
 
   if (provider === "cocode") {
-    return relayAnthropicPreset("cocode", "Cocode", COCODE_ANTHROPIC_BASE);
+    return relayAnthropicPreset("cocode", "Cocode", COCODE_ANTHROPIC_BASE, {
+      models: [
+        { id: "claude-opus-5", displayName: "Claude Opus 5", contextLength: 0 },
+        { id: "claude-fable-5", displayName: "Claude Fable 5", contextLength: 0 }
+      ],
+      mapping: {
+        main: "claude-opus-5",
+        opus: "claude-opus-5",
+        sonnet: "claude-opus-5",
+        haiku: "claude-opus-5",
+        fable: "claude-fable-5",
+        subagent: "claude-opus-5"
+      }
+    });
   }
 
   throw new Error(`unknown provider "${provider}"`);
 }
 
-function relayAnthropicPreset(provider, displayName, baseUrl) {
+function relayAnthropicPreset(provider, displayName, baseUrl, overrides = {}) {
   return {
     defaultName: provider,
     displayName,
@@ -1431,10 +1444,10 @@ function relayAnthropicPreset(provider, displayName, baseUrl) {
     allowBaseUrlEdit: true,
     keyDefaults: keyDefaultsForProvider(provider),
     modelSource: `static-${provider}-preset`,
-    models: [
+    models: overrides.models || [
       { id: "claude-opus-4-8", displayName: "Claude Opus 4.8", contextLength: 0 }
     ],
-    mapping: sameModelMapping("claude-opus-4-8"),
+    mapping: overrides.mapping || sameModelMapping("claude-opus-4-8"),
     env: {
       ENABLE_TOOL_SEARCH: "true"
     }

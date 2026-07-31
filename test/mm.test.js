@@ -1008,8 +1008,8 @@ test("add cocode saves a Yunwu-compatible relay profile", async () => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         data: [
-          { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-          { id: "claude-sonnet-4", name: "Claude Sonnet 4" }
+          { id: "claude-opus-5", name: "Claude Opus 5" },
+          { id: "claude-fable-5", name: "Claude Fable 5" }
         ]
       }));
       return;
@@ -1044,7 +1044,7 @@ test("add cocode saves a Yunwu-compatible relay profile", async () => {
         id: "msg_cocode",
         type: "message",
         role: "assistant",
-        model: "claude-opus-4-8",
+        model: "claude-opus-5",
         content: [{ type: "text", text: "ok" }],
         usage: { input_tokens: 8, output_tokens: 1 }
       }));
@@ -1072,9 +1072,7 @@ test("add cocode saves a Yunwu-compatible relay profile", async () => {
       "cocode",
       "--yes",
       "--base-url",
-      `http://127.0.0.1:${port}`,
-      "--model",
-      "claude-opus-4-8"
+      `http://127.0.0.1:${port}`
     ], {
       cwd: path.resolve(__dirname, ".."),
       env: {
@@ -1089,12 +1087,17 @@ test("add cocode saves a Yunwu-compatible relay profile", async () => {
     assert.equal(profile.provider, "cocode");
     assert.equal(profile.mode, "api");
     assert.equal(profile.baseUrl, `http://127.0.0.1:${port}`);
-    assert.equal(profile.model.main, "claude-opus-4-8");
+    assert.equal(profile.model.main, "claude-opus-5");
+    assert.equal(profile.model.opus, "claude-opus-5");
+    assert.equal(profile.model.sonnet, "claude-opus-5");
+    assert.equal(profile.model.haiku, "claude-opus-5");
+    assert.equal(profile.model.fable, "claude-fable-5");
+    assert.equal(profile.model.subagent, "claude-opus-5");
     assert.equal(profile.modelSource, `http://127.0.0.1:${port}/v1/models`);
     assert.equal(profile.balanceCache.provider, "cocode");
     assert.equal(profile.balanceCache.available, 19);
     assert.equal(profile.statusCache.success, true);
-    assert.equal(JSON.parse(requestBody).model, "claude-opus-4-8");
+    assert.equal(JSON.parse(requestBody).model, "claude-opus-5");
     assert.deepEqual(requests, ["/v1/models", "/api/usage/token/", "/v1/messages"]);
 
     const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
