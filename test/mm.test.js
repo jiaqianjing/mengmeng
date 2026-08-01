@@ -26,6 +26,7 @@ const {
   selectOptionEscOption,
   visibleOptionRange,
   modelsForProfile,
+  clearProviderSettings,
   mergeSettings,
   settingsForProfile,
   listStatus,
@@ -49,7 +50,7 @@ const plainColor = {
 };
 
 test("application version is controlled from package and CLI constant", async () => {
-  assert.equal(APP_VERSION, "0.3.2");
+  assert.equal(APP_VERSION, "0.3.3");
   assert.equal(packageJson.version, APP_VERSION);
 
   const cwd = path.resolve(__dirname, "..");
@@ -418,6 +419,30 @@ test("mergeSettings preserves unrelated settings", () => {
   assert.equal(target.env.KEEP_ME, "yes");
   assert.equal(target.env.ANTHROPIC_BASE_URL, "https://api.kimi.com/coding");
   assert.equal(target.skipAutoPermissionPrompt, true);
+});
+
+test("clearProviderSettings removes mm-managed provider env and preserves unrelated settings", () => {
+  const settings = {
+    theme: "dark",
+    skipAutoPermissionPrompt: true,
+    env: {
+      KEEP_ME: "yes",
+      ANTHROPIC_BASE_URL: "https://relay.example.com",
+      ANTHROPIC_AUTH_TOKEN: "secret",
+      ANTHROPIC_MODEL: "relay-model",
+      ANTHROPIC_DEFAULT_FABLE_MODEL: "relay-fable",
+      ENABLE_TOOL_SEARCH: "true",
+      CUSTOM_PROVIDER_FLAG: "managed"
+    }
+  };
+
+  clearProviderSettings(settings, [{ env: { CUSTOM_PROVIDER_FLAG: "managed" } }]);
+
+  assert.deepEqual(settings, {
+    theme: "dark",
+    skipAutoPermissionPrompt: true,
+    env: { KEEP_ME: "yes" }
+  });
 });
 
 test("detectStorageCandidates always includes local and custom choices", () => {
@@ -1364,6 +1389,120 @@ test("remove refuses active profile even with yes flag", async () => {
     const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
     assert.equal(config.current, "glm");
     assert.deepEqual(store.profiles.map((profile) => profile.name), ["glm", "mimo"]);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("use claude restores official subscription mode without deleting unrelated settings", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    const settingsPath = path.join(temp, "settings.json");
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: settingsPath,
+      current: "cocode",
+      createdAt: now,
+      updatedAt: now
+    }));
+    fs.writeFileSync(path.join(temp, "profiles.json"), JSON.stringify({
+      version: 1,
+      profiles: [{
+        name: "cocode",
+        provider: "cocode",
+        mode: "api",
+        env: { CUSTOM_PROVIDER_FLAG: "managed" }
+      }]
+    }));
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      theme: "dark",
+      skipAutoPermissionPrompt: true,
+      env: {
+        KEEP_ME: "yes",
+        ANTHROPIC_BASE_URL: "https://www.cocode.icu",
+        ANTHROPIC_AUTH_TOKEN: "cocode-test-key",
+        ANTHROPIC_MODEL: "claude-opus-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5",
+        ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5",
+        CLAUDE_CODE_SUBAGENT_MODEL: "claude-opus-5",
+        ENABLE_TOOL_SEARCH: "true",
+        CUSTOM_PROVIDER_FLAG: "managed"
+      }
+    }));
+
+    const { stdout } = await execFileAsync(process.execPath, [
+      "bin/mm.js",
+      "--json",
+      "use",
+      "claude"
+    ], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: settingsPath
+      }
+    });
+
+    assert.deepEqual(JSON.parse(stdout), {
+      success: true,
+      current: "claude",
+      mode: "official-subscription"
+    });
+    const config = JSON.parse(fs.readFileSync(path.join(temp, "config.json"), "utf8"));
+    assert.equal(config.current, "claude");
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    assert.deepEqual(settings, {
+      theme: "dark",
+      skipAutoPermissionPrompt: true,
+      env: { KEEP_ME: "yes" }
+    });
+    const backups = fs.readdirSync(path.join(temp, "backups"));
+    assert.equal(backups.length, 1);
+    const backup = JSON.parse(fs.readFileSync(path.join(temp, "backups", backups[0]), "utf8"));
+    assert.equal(backup.env.ANTHROPIC_AUTH_TOKEN, "cocode-test-key");
+
+    const current = await execFileAsync(process.execPath, ["bin/mm.js", "current"], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: settingsPath
+      }
+    });
+    assert.equal(current.stdout.trim(), "claude (official subscription)");
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("list includes the built-in Claude official subscription target", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-06-14T00:00:00Z";
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: path.join(temp, "settings.json"),
+      current: "claude",
+      createdAt: now,
+      updatedAt: now
+    }));
+    fs.writeFileSync(path.join(temp, "profiles.json"), JSON.stringify({ version: 1, profiles: [] }));
+
+    const { stdout } = await execFileAsync(process.execPath, ["bin/mm.js", "--no-color", "list"], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: path.join(temp, "settings.json")
+      }
+    });
+
+    assert.match(stdout, /✹\s+claude\s+Anthropic official\s+subscription/);
+    assert.match(stdout, /official login/);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

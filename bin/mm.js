@@ -6,7 +6,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-const APP_VERSION = "0.3.2";
+const APP_VERSION = "0.3.3";
 const STORE_VERSION = 1;
 const INSTALL_SH_URL = "https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.sh";
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";
@@ -26,6 +26,28 @@ const MIMO_TOKEN_PLAN_ANTHROPIC_BASE = "https://token-plan-cn.xiaomimimo.com/ant
 const YUNWU_ANTHROPIC_BASE = "https://yunwu.ai";
 const COCODE_ANTHROPIC_BASE = "https://www.cocode.icu";
 const COCODE_PRESET_VERSION = 2;
+const OFFICIAL_CLAUDE_PROFILE = "claude";
+const OFFICIAL_CLAUDE_ALIASES = ["claude", "official"];
+const PROVIDER_ENV_KEYS = [
+  "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_AUTH_TOKEN",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL",
+  "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
+  "CLAUDE_CODE_SUBAGENT_MODEL",
+  "ENABLE_TOOL_SEARCH",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+  "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+  "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+  "CLAUDE_CODE_EFFORT_LEVEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL_SUPPORTED_CAPABILITIES"
+];
 const YUNWU_QUOTA_PER_USD = 500000;
 const PROBE_PROMPT = "这是一个接口测试，请返回 \"ok\" 即可。";
 const PROBE_MAX_TOKENS = 8;
@@ -170,7 +192,7 @@ ${color.cyan("Usage:")}
   ${color.gray("mm show <profile>")}
   ${color.gray("mm edit <profile>")}
   ${color.gray("mm edit <profile> --apply-defaults --yes")}
-  ${color.gray("mm use <profile>")}
+  ${color.gray("mm use <profile|claude>")}
   ${color.gray("mm doctor")}
   ${color.gray("mm remove <profile>")}
   ${color.gray("mm rollback [backup-id]")}
@@ -885,10 +907,6 @@ async function listCommand(args, opts) {
   if (changed) writeStore(config.configDir, store);
 
   if (opts.json) return printJSON(store.profiles.map(redactProfile));
-  if (!store.profiles.length) {
-    console.log("No profiles yet. Try `mm add kimi`.");
-    return;
-  }
   const color = makeColor(opts);
   console.log([
     pad("", 4),
@@ -897,6 +915,15 @@ async function listCommand(args, opts) {
     pad(color.gray("MODEL"), 20),
     pad(color.gray("LIMIT"), 30),
     color.gray("STATUS")
+  ].join(" "));
+  const officialActive = config.current === OFFICIAL_CLAUDE_PROFILE;
+  console.log([
+    pad(activeMarker(officialActive, color), 4),
+    pad(OFFICIAL_CLAUDE_PROFILE, 18),
+    pad(officialActive ? color.bold("Anthropic official") : "Anthropic official", 18),
+    pad(color.gray("subscription"), 20),
+    pad(color.gray("Claude plan"), 30),
+    color.green("official login")
   ].join(" "));
   for (const profile of store.profiles) {
     const isActive = profile.name === config.current;
@@ -928,8 +955,9 @@ async function listCommand(args, opts) {
 
 function currentCommand(opts) {
   const config = requireConfig();
-  if (opts.json) return printJSON({ current: config.current || null });
-  console.log(config.current || "No active MengMeng profile.");
+  const official = config.current === OFFICIAL_CLAUDE_PROFILE;
+  if (opts.json) return printJSON({ current: config.current || null, ...(official ? { mode: "official-subscription" } : {}) });
+  console.log(official ? "claude (official subscription)" : config.current || "No active MengMeng profile.");
 }
 
 function showCommand(args, opts) {
@@ -1197,7 +1225,14 @@ async function cacheOrError(fn, provider) {
 
 async function useCommand(args, opts) {
   const name = args[0];
-  if (!name) throw new Error("usage: mm use <profile>");
+  if (!name || args.length > 1) throw new Error("usage: mm use <profile|claude>");
+  if (OFFICIAL_CLAUDE_ALIASES.includes(name.toLowerCase())) {
+    await useOfficialClaude();
+    if (opts.json) return printJSON({ success: true, current: OFFICIAL_CLAUDE_PROFILE, mode: "official-subscription" });
+    const color = makeColor(opts);
+    console.log(`${color.green("Current provider:")} ${color.cyan("Claude official subscription")}`);
+    return;
+  }
   await useProfile(name);
   if (opts.json) return printJSON({ success: true, current: name });
   const color = makeColor(opts);
@@ -1331,13 +1366,35 @@ function importCommand(args, opts) {
 async function useProfile(name) {
   const profile = loadProfile(name);
   const config = requireConfig();
+  const store = readStore(config.configDir);
   backupClaudeSettings(config);
   const settings = readJSONIfExists(config.claudeConfigPath) || {};
+  clearProviderSettings(settings, store.profiles);
   mergeSettings(settings, settingsForProfile(profile, { redact: false }));
   writeJSONAtomic(config.claudeConfigPath, settings);
   config.current = name;
   config.updatedAt = new Date().toISOString();
   writeConfig(config);
+}
+
+async function useOfficialClaude() {
+  const config = requireConfig();
+  const store = readStore(config.configDir);
+  backupClaudeSettings(config);
+  const settings = readJSONIfExists(config.claudeConfigPath) || {};
+  clearProviderSettings(settings, store.profiles);
+  writeJSONAtomic(config.claudeConfigPath, settings);
+  config.current = OFFICIAL_CLAUDE_PROFILE;
+  config.updatedAt = new Date().toISOString();
+  writeConfig(config);
+}
+
+function clearProviderSettings(settings, profiles = []) {
+  if (!settings.env || typeof settings.env !== "object") return settings;
+  const profileEnvKeys = profiles.flatMap((profile) => Object.keys(profile.env || {}));
+  for (const key of unique([...PROVIDER_ENV_KEYS, ...profileEnvKeys])) delete settings.env[key];
+  if (!Object.keys(settings.env).length) delete settings.env;
+  return settings;
 }
 
 function settingsForProfile(profile, { redact }) {
@@ -2950,6 +3007,7 @@ module.exports = {
   selectOptionEscOption,
   visibleOptionRange,
   modelsForProfile,
+  clearProviderSettings,
   mergeSettings,
   settingsForProfile,
   listStatus,

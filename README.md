@@ -63,6 +63,7 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 - 可选开启 Claude Code power-user permission 设置
 - `mm list` 查看 profile，显示 Coding Plan quota、API 余额、连通性状态和当前 active provider
 - `mm use` 切换当前 provider，写入前自动备份
+- `mm use claude` 清除第三方 provider 覆盖，切回 Claude 官方订阅登录
 - `show` / `export` / `import` / `remove` / `rollback`
 - `version` 查看当前 MengMeng 版本
 - `upgrade` 通过安装脚本升级当前 `mm`
@@ -80,6 +81,7 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 | Xiaomi MiMo | Token Plan / API key | `https://token-plan-cn.xiaomimimo.com/anthropic` 或 `https://api.xiaomimimo.com/anthropic` | 支持，失败回退默认 | 暂无 | 支持 |
 | Yunwu | API key | `https://yunwu.ai` | 支持，失败回退 `claude-opus-4-8` | 令牌余额 | 支持 |
 | Cocode | API key | `https://www.cocode.icu` | 支持，失败回退 `claude-opus-5` / `claude-fable-5` | 令牌余额 | 支持 |
+| Anthropic 官方 | Claude 订阅登录 | Claude Code 默认 | Claude Code 管理 | Claude Code 管理 | 使用官方登录状态 |
 
 > **Claude Opus 国内可用入口**
 >
@@ -93,6 +95,12 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 够稳定再考虑。
 
 ## Release Notes
+
+### 0.3.3
+
+- 新增内置的 Claude 官方订阅模式：`mm use claude`
+- 切回官方模式前自动备份，并只清理 mm 管理的 provider、模型和附加环境变量
+- `mm list` 会始终显示 `claude` 官方订阅切换目标
 
 ### 0.3.2
 
@@ -374,7 +382,7 @@ mm current
 mm show <profile>
 mm edit <profile>
 mm edit <profile> --apply-defaults --yes
-mm use <profile>
+mm use <profile|claude>
 mm doctor
 mm remove <profile>
 mm rollback [backup-id]
@@ -427,6 +435,18 @@ mm edit cocode --apply-defaults --yes
 交互运行 `mm edit cocode` 时，可以选择 `Apply latest recommended mapping`
 预览并一次性应用最新 Cocode 模型映射。非交互命令会直接应用推荐值；如果该
 profile 当前处于 active 状态，还会同步重写 Claude Code 设置。
+
+切回 Claude Code 官方订阅账号：
+
+```sh
+mm use claude
+```
+
+这个命令不创建 API profile，也不处理登录凭据。它会先备份当前设置，然后移除
+mm 写入的第三方 Base URL、Token、模型映射和 provider 附加环境变量。主题、
+权限等无关设置会保留。之后启动 `claude`，Claude Code 会继续使用自身保存的
+官方账号登录；如果尚未登录，按 Claude Code 的登录提示操作即可。`official`
+也可以作为 `claude` 的别名。
 
 ## `mm use` 会写入什么
 
