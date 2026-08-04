@@ -50,7 +50,7 @@ const plainColor = {
 };
 
 test("application version is controlled from package and CLI constant", async () => {
-  assert.equal(APP_VERSION, "0.3.3");
+  assert.equal(APP_VERSION, "0.3.4");
   assert.equal(packageJson.version, APP_VERSION);
 
   const cwd = path.resolve(__dirname, "..");
@@ -285,18 +285,84 @@ test("recommendMapping chooses the coding model", () => {
   assert.equal(mapping.haiku, "kimi-for-coding");
 });
 
-test("recommendDeepSeekMapping follows Claude Code defaults", () => {
+test("recommendDeepSeekMapping defaults every slot to DeepSeek V4 Flash", () => {
   const mapping = recommendDeepSeekMapping([
-    { id: "deepseek-v4-pro[1m]", displayName: "DeepSeek V4 Pro 1M" },
     { id: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro" },
     { id: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash" }
   ]);
 
-  assert.equal(mapping.main, "deepseek-v4-pro[1m]");
-  assert.equal(mapping.opus, "deepseek-v4-pro[1m]");
-  assert.equal(mapping.sonnet, "deepseek-v4-pro[1m]");
+  assert.equal(mapping.main, "deepseek-v4-flash");
+  assert.equal(mapping.opus, "deepseek-v4-flash");
+  assert.equal(mapping.sonnet, "deepseek-v4-flash");
   assert.equal(mapping.haiku, "deepseek-v4-flash");
+  assert.equal(mapping.fable, "deepseek-v4-flash");
   assert.equal(mapping.subagent, "deepseek-v4-flash");
+});
+
+test("legacy DeepSeek mappings migrate to V4 Flash and rewrite active settings", async () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
+  try {
+    const now = "2026-08-01T00:00:00Z";
+    const settingsPath = path.join(temp, "settings.json");
+    fs.writeFileSync(path.join(temp, "config.json"), JSON.stringify({
+      initialized: true,
+      configDir: temp,
+      claudeConfigPath: settingsPath,
+      current: "deepseek",
+      createdAt: now,
+      updatedAt: now
+    }));
+    fs.writeFileSync(path.join(temp, "profiles.json"), JSON.stringify({
+      version: 1,
+      profiles: [{
+        name: "deepseek",
+        provider: "deepseek",
+        mode: "api",
+        baseUrl: "https://api.deepseek.com/anthropic",
+        apiKey: "sk-deepseek-test",
+        model: {
+          main: "deepseek-v4-pro[1m]",
+          opus: "deepseek-v4-pro[1m]",
+          sonnet: "deepseek-v4-pro",
+          haiku: "deepseek-v4-flash",
+          fable: "deepseek-v4-pro[1m]",
+          subagent: "deepseek-v4-flash"
+        },
+        env: { ENABLE_TOOL_SEARCH: "false" },
+        powerUser: false,
+        createdAt: now,
+        updatedAt: now
+      }]
+    }));
+    fs.writeFileSync(settingsPath, JSON.stringify({ env: { KEEP_ME: "yes" } }));
+
+    await execFileAsync(process.execPath, ["bin/mm.js", "current"], {
+      cwd: path.resolve(__dirname, ".."),
+      env: {
+        ...process.env,
+        MENGMENG_HOME: temp,
+        MENGMENG_CLAUDE_CONFIG: settingsPath
+      }
+    });
+
+    const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
+    assert.deepEqual(store.profiles[0].model, {
+      main: "deepseek-v4-flash",
+      opus: "deepseek-v4-flash",
+      sonnet: "deepseek-v4-pro",
+      haiku: "deepseek-v4-flash",
+      fable: "deepseek-v4-flash",
+      subagent: "deepseek-v4-flash"
+    });
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    assert.equal(settings.env.KEEP_ME, "yes");
+    assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-v4-flash");
+    assert.equal(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "deepseek-v4-pro");
+    assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-v4-flash");
+    assert.equal(fs.readdirSync(path.join(temp, "backups")).length, 1);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
 });
 
 test("recommendSiliconFlowMapping prefers GLM 5.2", () => {
@@ -494,10 +560,11 @@ test("settingsForProfile supports DeepSeek API mode", () => {
     baseUrl: "https://api.deepseek.com/anthropic",
     apiKey: "sk-deepseek-test",
     model: {
-      main: "deepseek-v4-pro[1m]",
-      opus: "deepseek-v4-pro[1m]",
-      sonnet: "deepseek-v4-pro[1m]",
+      main: "deepseek-v4-flash",
+      opus: "deepseek-v4-flash",
+      sonnet: "deepseek-v4-flash",
       haiku: "deepseek-v4-flash",
+      fable: "deepseek-v4-flash",
       subagent: "deepseek-v4-flash"
     },
     env: {
@@ -509,10 +576,10 @@ test("settingsForProfile supports DeepSeek API mode", () => {
 
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://api.deepseek.com/anthropic");
   assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "sk-deepseek-test");
-  assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-v4-pro[1m]");
+  assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-v4-flash");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "deepseek-v4-flash");
-  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, "deepseek-v4-pro");
-  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-v4-pro[1m]");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, "deepseek-v4-flash");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-v4-flash");
 });
 
 test("settingsForProfile carries GLM 1M mapping and extra Claude env", () => {

@@ -8,8 +8,8 @@
   <text x="28" y="124" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Provider: DeepSeek API</text>
   <text x="28" y="160" fill="#E5E7EB" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Base URL: https://api.deepseek.com/anthropic</text>
   <text x="28" y="214" fill="#A7F3D0" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Claude Code mapping:</text>
-  <text x="48" y="254" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">main:     deepseek-v4-pro[1m]</text>
-  <text x="48" y="288" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">sonnet:   deepseek-v4-pro[1m]</text>
+  <text x="48" y="254" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">main:     deepseek-v4-flash</text>
+  <text x="48" y="288" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">sonnet:   deepseek-v4-flash</text>
   <text x="48" y="322" fill="#CBD5E1" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">haiku:    deepseek-v4-flash</text>
   <text x="28" y="378" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Status: ok 930ms</text>
   <text x="28" y="416" fill="#22C55E" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="20">Balance: ¥9.52 CNY available</text>
