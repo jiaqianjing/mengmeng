@@ -322,7 +322,7 @@ state a Claude Code user cares about before switching:
 ```text
 ✹ kimi        Kimi Coding Plan   kimi-k2.7-code   5h 42%  week 18%   ok
   glm-work    GLM Coding Plan    glm-5.1-coding   5h 76%  week 51%   warn
-  deepseek    DeepSeek API       deepseek-chat     balance ¥3.21 RMB  ok
+  deepseek    DeepSeek API       deepseek-v4-flash balance ¥3.21 RMB  ok
   official    Claude Official    claude-sonnet     local             fallback
 ```
 

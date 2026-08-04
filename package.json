@@ -1,6 +1,6 @@
 {
   "name": "mengmeng",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "private": true,
   "description": "A tiny Claude Code provider assistant for Kimi, MiMo, GLM, DeepSeek, SiliconFlow, Yunwu, Cocode, and custom coding-plan providers.",
   "bin": {

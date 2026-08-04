@@ -96,6 +96,12 @@ MengMeng 会把 provider profile 存在自己的配置目录里。你执行
 
 ## Release Notes
 
+### 0.3.4
+
+- DeepSeek 官方模型名称更新为 `deepseek-v4-flash` 和 `deepseek-v4-pro`
+- DeepSeek 的所有 Claude Code 模型槽位默认改为 `deepseek-v4-flash`
+- 首次运行新版 `mm` 时自动迁移已有 profile 中的旧 `deepseek-v4-pro[1m]` 映射；active profile 会同步更新 Claude Code 设置
+
 ### 0.3.3
 
 - 新增内置的 Claude 官方订阅模式：`mm use claude`

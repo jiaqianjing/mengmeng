@@ -6,7 +6,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-const APP_VERSION = "0.3.3";
+const APP_VERSION = "0.3.4";
 const STORE_VERSION = 1;
 const INSTALL_SH_URL = "https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.sh";
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";
@@ -147,6 +147,7 @@ async function main() {
   }
 
   await ensureInitialized(command, args.slice(1), opts);
+  await migrateLegacyDeepSeekProfiles();
 
   switch (command) {
     case "add":
@@ -1670,7 +1671,7 @@ async function fetchDeepSeekModels(apiKey) {
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`DeepSeek models request failed: HTTP ${res.status}: ${text}`);
-  return withDeepSeekClaudeVariants(parseDeepSeekModels(JSON.parse(text)));
+  return parseDeepSeekModels(JSON.parse(text));
 }
 
 async function fetchDeepSeekBalance(apiKey) {
@@ -1870,19 +1871,6 @@ function endsWithVersionSegment(url) {
 
 function unique(values) {
   return values.filter((value, index) => values.indexOf(value) === index);
-}
-
-function withDeepSeekClaudeVariants(models) {
-  const ids = new Set(models.map((model) => model.id));
-  const output = [...models];
-  if (ids.has("deepseek-v4-pro") && !ids.has("deepseek-v4-pro[1m]")) {
-    output.unshift({
-      id: "deepseek-v4-pro[1m]",
-      displayName: "deepseek-v4-pro for Claude Code 1M",
-      contextLength: 1000000
-    });
-  }
-  return output;
 }
 
 function parseKimiBalance(body) {
@@ -2249,16 +2237,32 @@ function modelMappingsEqual(left, right) {
 
 function recommendDeepSeekMapping(models) {
   const ids = new Set(models.map((model) => model.id));
-  const pro = ids.has("deepseek-v4-pro[1m]") ? "deepseek-v4-pro[1m]" : ids.has("deepseek-v4-pro") ? "deepseek-v4-pro" : models[0]?.id || "deepseek-v4-pro[1m]";
-  const flash = ids.has("deepseek-v4-flash") ? "deepseek-v4-flash" : pro;
-  return {
-    main: pro,
-    opus: pro,
-    sonnet: pro,
-    haiku: flash,
-    fable: pro,
-    subagent: flash
-  };
+  const flash = ids.has("deepseek-v4-flash") ? "deepseek-v4-flash" : models[0]?.id || "deepseek-v4-flash";
+  return sameModelMapping(flash);
+}
+
+function migrateLegacyDeepSeekProfile(profile) {
+  if (profile.provider !== "deepseek" || profile.mode !== "api") return false;
+  const mapping = normalizeProfileMapping(profile.model);
+  let changed = false;
+  for (const slot of ["main", "opus", "sonnet", "haiku", "fable", "subagent"]) {
+    if (mapping[slot] !== "deepseek-v4-pro[1m]") continue;
+    mapping[slot] = "deepseek-v4-flash";
+    changed = true;
+  }
+  if (changed) profile.model = mapping;
+  return changed;
+}
+
+async function migrateLegacyDeepSeekProfiles() {
+  const config = requireConfig();
+  const store = readStore(config.configDir);
+  const migrated = store.profiles.filter(migrateLegacyDeepSeekProfile);
+  if (!migrated.length) return;
+  const now = new Date().toISOString();
+  for (const profile of migrated) profile.updatedAt = now;
+  writeStore(config.configDir, store);
+  if (migrated.some((profile) => profile.name === config.current)) await useProfile(config.current);
 }
 
 function recommendSiliconFlowMapping(models) {
