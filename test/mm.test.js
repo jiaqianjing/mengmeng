@@ -50,7 +50,7 @@ const plainColor = {
 };
 
 test("application version is controlled from package and CLI constant", async () => {
-  assert.equal(APP_VERSION, "0.3.4");
+  assert.equal(APP_VERSION, "0.3.5");
   assert.equal(packageJson.version, APP_VERSION);
 
   const cwd = path.resolve(__dirname, "..");
@@ -174,13 +174,13 @@ test("parseKimiBalance extracts available voucher and cash balances", () => {
 test("parseDeepSeekModels normalizes model list", () => {
   const models = parseDeepSeekModels({
     data: [
-      { id: "deepseek-v4-flash", object: "model", owned_by: "deepseek" },
+      { id: "deepseek-flash", object: "model", owned_by: "deepseek" },
       { id: "deepseek-v4-pro", object: "model", owned_by: "deepseek" }
     ]
   });
 
   assert.deepEqual(models, [
-    { id: "deepseek-v4-flash", displayName: "deepseek-v4-flash", contextLength: 0 },
+    { id: "deepseek-flash", displayName: "deepseek-flash", contextLength: 0 },
     { id: "deepseek-v4-pro", displayName: "deepseek-v4-pro", contextLength: 0 }
   ]);
 });
@@ -285,21 +285,31 @@ test("recommendMapping chooses the coding model", () => {
   assert.equal(mapping.haiku, "kimi-for-coding");
 });
 
-test("recommendDeepSeekMapping defaults every slot to DeepSeek V4 Flash", () => {
+test("recommendDeepSeekMapping defaults every slot to DeepSeek Flash", () => {
+  const mapping = recommendDeepSeekMapping([
+    { id: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro" },
+    { id: "deepseek-flash", displayName: "DeepSeek Flash" }
+  ]);
+
+  assert.equal(mapping.main, "deepseek-flash");
+  assert.equal(mapping.opus, "deepseek-flash");
+  assert.equal(mapping.sonnet, "deepseek-flash");
+  assert.equal(mapping.haiku, "deepseek-flash");
+  assert.equal(mapping.fable, "deepseek-flash");
+  assert.equal(mapping.subagent, "deepseek-flash");
+});
+
+test("recommendDeepSeekMapping falls back to the legacy Flash id", () => {
   const mapping = recommendDeepSeekMapping([
     { id: "deepseek-v4-pro", displayName: "DeepSeek V4 Pro" },
     { id: "deepseek-v4-flash", displayName: "DeepSeek V4 Flash" }
   ]);
 
   assert.equal(mapping.main, "deepseek-v4-flash");
-  assert.equal(mapping.opus, "deepseek-v4-flash");
-  assert.equal(mapping.sonnet, "deepseek-v4-flash");
-  assert.equal(mapping.haiku, "deepseek-v4-flash");
-  assert.equal(mapping.fable, "deepseek-v4-flash");
   assert.equal(mapping.subagent, "deepseek-v4-flash");
 });
 
-test("legacy DeepSeek mappings migrate to V4 Flash and rewrite active settings", async () => {
+test("retired DeepSeek mappings migrate to DeepSeek Flash and rewrite active settings", async () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "mengmeng-test-"));
   try {
     const now = "2026-08-01T00:00:00Z";
@@ -324,9 +334,9 @@ test("legacy DeepSeek mappings migrate to V4 Flash and rewrite active settings",
           main: "deepseek-v4-pro[1m]",
           opus: "deepseek-v4-pro[1m]",
           sonnet: "deepseek-v4-pro",
-          haiku: "deepseek-v4-flash",
+          haiku: "deepseek-flash",
           fable: "deepseek-v4-pro[1m]",
-          subagent: "deepseek-v4-flash"
+          subagent: "deepseek-v4-flash-vision-exp"
         },
         env: { ENABLE_TOOL_SEARCH: "false" },
         powerUser: false,
@@ -347,18 +357,18 @@ test("legacy DeepSeek mappings migrate to V4 Flash and rewrite active settings",
 
     const store = JSON.parse(fs.readFileSync(path.join(temp, "profiles.json"), "utf8"));
     assert.deepEqual(store.profiles[0].model, {
-      main: "deepseek-v4-flash",
-      opus: "deepseek-v4-flash",
+      main: "deepseek-flash",
+      opus: "deepseek-flash",
       sonnet: "deepseek-v4-pro",
-      haiku: "deepseek-v4-flash",
-      fable: "deepseek-v4-flash",
-      subagent: "deepseek-v4-flash"
+      haiku: "deepseek-flash",
+      fable: "deepseek-flash",
+      subagent: "deepseek-flash"
     });
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
     assert.equal(settings.env.KEEP_ME, "yes");
-    assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-v4-flash");
+    assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-flash");
     assert.equal(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "deepseek-v4-pro");
-    assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-v4-flash");
+    assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-flash");
     assert.equal(fs.readdirSync(path.join(temp, "backups")).length, 1);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
@@ -560,12 +570,12 @@ test("settingsForProfile supports DeepSeek API mode", () => {
     baseUrl: "https://api.deepseek.com/anthropic",
     apiKey: "sk-deepseek-test",
     model: {
-      main: "deepseek-v4-flash",
-      opus: "deepseek-v4-flash",
-      sonnet: "deepseek-v4-flash",
-      haiku: "deepseek-v4-flash",
-      fable: "deepseek-v4-flash",
-      subagent: "deepseek-v4-flash"
+      main: "deepseek-flash",
+      opus: "deepseek-flash",
+      sonnet: "deepseek-flash",
+      haiku: "deepseek-flash",
+      fable: "deepseek-flash",
+      subagent: "deepseek-flash"
     },
     env: {
       ENABLE_TOOL_SEARCH: "false",
@@ -576,10 +586,10 @@ test("settingsForProfile supports DeepSeek API mode", () => {
 
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://api.deepseek.com/anthropic");
   assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, "sk-deepseek-test");
-  assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-v4-flash");
-  assert.equal(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "deepseek-v4-flash");
-  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, "deepseek-v4-flash");
-  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-v4-flash");
+  assert.equal(settings.env.ANTHROPIC_MODEL, "deepseek-flash");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "deepseek-flash");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME, "deepseek-flash");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "deepseek-flash");
 });
 
 test("settingsForProfile carries GLM 1M mapping and extra Claude env", () => {
