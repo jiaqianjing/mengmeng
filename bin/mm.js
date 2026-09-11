@@ -6,7 +6,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
-const APP_VERSION = "0.3.4";
+const APP_VERSION = "0.3.5";
 const STORE_VERSION = 1;
 const INSTALL_SH_URL = "https://raw.githubusercontent.com/jiaqianjing/mengmeng/main/install.sh";
 const KIMI_CODING_BASE = "https://api.kimi.com/coding";
@@ -17,6 +17,14 @@ const DEEPSEEK_API_ORIGIN = "https://api.deepseek.com";
 const DEEPSEEK_ANTHROPIC_BASE = `${DEEPSEEK_API_ORIGIN}/anthropic`;
 const DEEPSEEK_MODELS_URL = `${DEEPSEEK_API_ORIGIN}/models`;
 const DEEPSEEK_BALANCE_URL = `${DEEPSEEK_API_ORIGIN}/user/balance`;
+const DEEPSEEK_FLASH_MODEL = "deepseek-flash";
+// Retired ids mm used to pick by default. A user-chosen "deepseek-v4-pro" is
+// deliberately left alone.
+const LEGACY_DEEPSEEK_MODELS = new Set([
+  "deepseek-v4-pro[1m]",
+  "deepseek-v4-flash",
+  "deepseek-v4-flash-vision-exp"
+]);
 const SILICONFLOW_API_ORIGIN = "https://api.siliconflow.cn";
 const SILICONFLOW_MODELS_URL = `${SILICONFLOW_API_ORIGIN}/v1/models?type=text&sub_type=chat`;
 const SILICONFLOW_USER_INFO_URL = `${SILICONFLOW_API_ORIGIN}/v1/user/info`;
@@ -2237,7 +2245,11 @@ function modelMappingsEqual(left, right) {
 
 function recommendDeepSeekMapping(models) {
   const ids = new Set(models.map((model) => model.id));
-  const flash = ids.has("deepseek-v4-flash") ? "deepseek-v4-flash" : models[0]?.id || "deepseek-v4-flash";
+  const flash = ids.has(DEEPSEEK_FLASH_MODEL)
+    ? DEEPSEEK_FLASH_MODEL
+    : ids.has("deepseek-v4-flash")
+      ? "deepseek-v4-flash"
+      : models[0]?.id || DEEPSEEK_FLASH_MODEL;
   return sameModelMapping(flash);
 }
 
@@ -2246,8 +2258,8 @@ function migrateLegacyDeepSeekProfile(profile) {
   const mapping = normalizeProfileMapping(profile.model);
   let changed = false;
   for (const slot of ["main", "opus", "sonnet", "haiku", "fable", "subagent"]) {
-    if (mapping[slot] !== "deepseek-v4-pro[1m]") continue;
-    mapping[slot] = "deepseek-v4-flash";
+    if (!LEGACY_DEEPSEEK_MODELS.has(mapping[slot])) continue;
+    mapping[slot] = DEEPSEEK_FLASH_MODEL;
     changed = true;
   }
   if (changed) profile.model = mapping;
